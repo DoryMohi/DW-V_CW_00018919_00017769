@@ -6,7 +6,7 @@ if "df" not in st.session_state:
 
 if "log" not in st.session_state:
     st.session_state["log"] = []
-    
+
 st.title("Page A — Upload & Overview")
 
 uploaded_file = st.file_uploader(
@@ -14,6 +14,23 @@ uploaded_file = st.file_uploader(
     type=["csv", "xlsx", "json"]
 )
 
+st.subheader("Or load from Google Sheets (optional)")
+
+sheet_url = st.text_input("Paste Google Sheets URL")
+
+if st.button("Load Google Sheet"):
+    if sheet_url.strip() == "":
+        st.warning("Please paste a Google Sheets URL.")
+    else:
+        try:
+            csv_url = sheet_url.replace("/edit#gid=", "/export?format=csv&gid=")
+            df = pd.read_csv(csv_url)
+
+            st.session_state["df"] = df
+            st.success("Google Sheet loaded!")
+
+        except Exception:
+            st.error("Could not load the sheet. Make sure it is public.")
 if uploaded_file is not None:
 
     # Detect file type
