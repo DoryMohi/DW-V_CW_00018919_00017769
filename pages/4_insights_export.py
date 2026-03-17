@@ -2,34 +2,42 @@ import streamlit as st
 import pandas as pd
 import io
 
+# DEBUG: check session state
+st.write("Session state keys:", list(st.session_state.keys()))
+
 st.set_page_config(page_title="Insights & Export", layout="wide")
 
-st.title("📄 Page D — Insights & Export Dashboard")
-
+st.title(" Page D — Insights & Export Dashboard")
 # =========================
-# SAFE DATA LOADING
+# DATA LOADING
 # =========================
 
 @st.cache_data
 def load_data(data):
     return data.copy()
 
-if "df" in st.session_state and st.session_state["df"] is not None:
-    df = load_data(st.session_state["df"])
-    st.success("Dataset loaded successfully")
-else:
-    st.error("No dataset found. Please upload data first.")
+# Always use .get() (safe access)
+df = st.session_state.get("df", None)
+
+if df is None:
+    st.error("No dataset found. Please upload data in Page A.")
     st.stop()
 
-if df.empty:
-    st.error("Dataset is empty.")
+#  Load safely
+df = load_data(df)
+
+# Extra validation
+if df is None or df.empty:
+    st.error("Dataset is empty or not loaded correctly.")
     st.stop()
+
+st.success("Dataset loaded successfully")
 
 # =========================
 # TOP METRICS
 # =========================
 
-st.subheader("📊 Dataset Overview")
+st.subheader("Dataset Overview")
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Rows", df.shape[0])
@@ -41,7 +49,7 @@ col4.metric("Duplicate Rows", int(df.duplicated().sum()))
 # DATA QUALITY CHECK
 # =========================
 
-st.subheader("🧹 Data Quality Insight")
+st.subheader("Data Quality Insight")
 
 missing = df.isnull().sum().sum()
 duplicates = df.duplicated().sum()
@@ -60,7 +68,7 @@ else:
 # COLUMN TYPES
 # =========================
 
-st.subheader("🧠 Column Analysis")
+st.subheader("Column Analysis")
 
 numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
 categorical_cols = df.select_dtypes(include='object').columns.tolist()
@@ -68,7 +76,7 @@ categorical_cols = df.select_dtypes(include='object').columns.tolist()
 colA, colB = st.columns(2)
 
 with colA:
-    st.write("🔢 Numeric Columns")
+    st.write("Numeric Columns")
     st.write(numeric_cols if numeric_cols else "None")
 
 with colB:
@@ -79,11 +87,11 @@ with colB:
 # SMART INSIGHTS
 # =========================
 
-st.subheader("💡 Smart Insights")
+st.subheader("Smart Insights")
 
 # NUMERIC
 if numeric_cols:
-    st.markdown("### 🔢 Numeric Analysis")
+    st.markdown("Numeric Analysis")
 
     selected_num = st.selectbox("Select numeric column", numeric_cols)
 
@@ -106,7 +114,7 @@ if numeric_cols:
 
 # CATEGORICAL
 if categorical_cols:
-    st.markdown("### 🏷 Categorical Analysis")
+    st.markdown("### Categorical Analysis")
 
     selected_cat = st.selectbox("Select categorical column", categorical_cols)
 
@@ -123,10 +131,10 @@ if categorical_cols:
         st.dataframe(top_values)
 
 # =========================
-# 🔥 ADVANCED ANALYSIS (KEY FOR 90+)
+# ADVANCED ANALYSIS
 # =========================
 
-st.subheader("📊 Advanced Analysis")
+st.subheader("Advanced Analysis")
 
 if numeric_cols and categorical_cols:
 
@@ -153,7 +161,7 @@ else:
 # CORRELATION
 # =========================
 
-st.subheader("📈 Correlation Analysis")
+st.subheader("Correlation Analysis")
 
 if len(numeric_cols) >= 2:
     try:
@@ -168,7 +176,7 @@ else:
 # DATA PREVIEW
 # =========================
 
-st.subheader("👀 Data Preview")
+st.subheader("Data Preview")
 
 rows_to_show = st.slider("Rows to preview", 5, 50, 10)
 st.dataframe(df.head(rows_to_show))
@@ -177,7 +185,7 @@ st.dataframe(df.head(rows_to_show))
 # EXPORT
 # =========================
 
-st.subheader("⬇ Export Options")
+st.subheader("Export Options")
 
 export_option = st.radio("Format", ["CSV", "Excel"])
 
@@ -193,7 +201,8 @@ if export_option == "CSV":
 
 else:
     buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         df.to_excel(writer, index=False)
 
     st.download_button(

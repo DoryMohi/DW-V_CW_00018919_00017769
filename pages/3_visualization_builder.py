@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 
-st.title("📊 Page C — Visualization Builder")
+st.title("Page C — Visualization Builder")
 
 # =========================
 # Dataset Selection
@@ -131,7 +131,7 @@ col2.metric("Columns", filtered_df.shape[1])
 
 st.dataframe(filtered_df.head())
 
-# DOWNLOAD BUTTON ✅
+# DOWNLOAD BUTTON 
 csv = filtered_df.to_csv(index=False).encode('utf-8')
 st.download_button(
     "⬇ Download Filtered Data",

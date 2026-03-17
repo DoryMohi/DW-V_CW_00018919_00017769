@@ -25,7 +25,7 @@ uploaded_file = st.file_uploader("Upload File", type=["csv", "xlsx", "json"])
 if uploaded_file is not None:
     
     try:
-        df = None  # ✅ IMPORTANT SAFETY LINE
+        df = None  # IMPORTANT SAFETY LINE
 
         # ---- Read file safely ----
         if uploaded_file.name.endswith(".csv"):
@@ -163,4 +163,3 @@ if st.button("Reset Session"):
 
 if st.session_state.get("df") is None:
     st.info("No dataset loaded. Please upload a file or connect Google Sheets.")
-    
