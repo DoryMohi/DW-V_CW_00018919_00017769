@@ -10,9 +10,10 @@ st.title("📊 Page C — Visualization Builder")
 
 st.subheader("Choose Dataset")
 
-if "df" in st.session_state:
+if "df" in st.session_state and st.session_state["df"] is not None:
     df = st.session_state["df"]
     st.success("Using uploaded dataset")
+
 else:
     dataset_choice = st.selectbox(
         "Select Dataset",
@@ -24,9 +25,13 @@ else:
     elif dataset_choice == "Healthcare":
         df = pd.read_csv("sample_data/healthcare_dataset_modified.csv")
     else:
-        df = pd.read_csv("sample_data/shopping_trends_updated_model.csv")
+        df = pd.read_csv("sample_data/shopping_trends_updated_modified.csv")
 
     st.info(f"Using {dataset_choice} dataset")
+
+if df is None:
+    st.error("No dataset loaded")
+    st.stop()
 
 # =========================
 # DATA QUALITY CHECK
