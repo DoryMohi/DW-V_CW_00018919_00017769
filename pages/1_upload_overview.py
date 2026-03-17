@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 
-# ------------------ Session State ------------------
+# ------------------ SESSION STATE ------------------
 
 if "df" not in st.session_state:
     st.session_state["df"] = None
@@ -9,49 +9,25 @@ if "df" not in st.session_state:
 if "log" not in st.session_state:
     st.session_state["log"] = []
 
-# ------------------ Title ------------------
+if "source" not in st.session_state:
+    st.session_state["source"] = None
+
+
+# ------------------ TITLE ------------------
 
 st.title("Page A — Upload & Overview")
 
-# ------------------ File Upload ------------------
 
-uploaded_file = st.file_uploader(
-    "Upload dataset",
-    type=["csv", "xlsx", "json"],
-    key="file_uploader"
+# ------------------ FILE UPLOAD ------------------
 
-)
-
-# ------------------ Google Sheets ------------------
-
-st.subheader("Or load from Google Sheets (optional)")
-
-sheet_url = st.text_input("Paste Google Sheets URL")
-
-if st.button("Load Google Sheet"):
-    if sheet_url.strip() == "":
-        st.warning("Please paste a Google Sheets URL.")
-    else:
-        try:
-            if "/edit" in sheet_url:
-                csv_url = sheet_url.split("/edit")[0] + "/export?format=csv"
-                df = pd.read_csv(csv_url)
-
-                st.session_state["df"] = df
-                st.session_state["log"].append("Loaded from Google Sheets")
-                st.success("Google Sheet loaded!")
-
-            else:
-                st.error("Invalid Google Sheets URL.")
-
-        except Exception:
-            st.error("Could not load the sheet. Make sure it is public.")
-
-# ------------------ File Handling ------------------
+uploaded_file = st.file_uploader("Upload File", type=["csv", "xlsx", "json"])
 
 if uploaded_file is not None:
-
+    
     try:
+        df = None  # ✅ IMPORTANT SAFETY LINE
+
+        # ---- Read file safely ----
         if uploaded_file.name.endswith(".csv"):
             df = pd.read_csv(uploaded_file)
 
@@ -61,23 +37,68 @@ if uploaded_file is not None:
         elif uploaded_file.name.endswith(".json"):
             df = pd.read_json(uploaded_file, orient="records")
 
-        st.session_state["df"] = df
-        st.session_state["log"].append("File uploaded")
-        st.success("File uploaded successfully!")
+        else:
+            st.error("Unsupported file type.")
 
-    except Exception:
-        st.error("Error reading file.")
+        # ---- Validation ----
+        if df is not None:
+            if df.empty:
+                st.error("Uploaded file is empty.")
+            else:
+                st.session_state["df"] = df
+                st.session_state["source"] = uploaded_file.name
+                st.session_state["log"].append(f"Uploaded file: {uploaded_file.name}")
 
-# ------------------ Display Data ------------------
+                st.success(f"File '{uploaded_file.name}' loaded successfully!")
 
-if st.session_state["df"] is not None:
+    except Exception as e:
+        st.error(f"Error reading file: {e}")
 
-    df = st.session_state["df"]
+
+# ------------------ GOOGLE SHEETS ------------------
+
+st.subheader("Or load from Google Sheets")
+
+sheet_url = st.text_input("Paste Google Sheets URL")
+
+if st.button("Load Google Sheet"):
+    try:
+        if sheet_url.strip() == "":
+            st.warning("Please paste a URL.")
+
+        elif "/edit" not in sheet_url:
+            st.error("Invalid Google Sheets link.")
+
+        else:
+            csv_url = sheet_url.split("/edit")[0] + "/export?format=csv"
+            df = pd.read_csv(csv_url)
+
+            if df.empty:
+                st.error("Google Sheet is empty.")
+            else:
+                st.session_state["df"] = df
+                st.session_state["source"] = "Google Sheets"
+                st.session_state["log"].append("Loaded from Google Sheets")
+
+                st.success("Google Sheet loaded successfully!")
+
+    except Exception as e:
+        st.error(f"Failed to load sheet: {e}")
+
+
+# ------------------ DISPLAY DATA ------------------
+
+df = st.session_state.get("df")
+
+df = st.session_state.get("df")
+
+if df is not None:
     df = df.convert_dtypes()
 
     st.subheader("Dataset Preview")
     st.dataframe(df.head())
 
+    # ---- Basic Info ----
     col1, col2 = st.columns(2)
 
     with col1:
@@ -86,48 +107,60 @@ if st.session_state["df"] is not None:
 
     with col2:
         st.write("Duplicates:", int(df.duplicated().sum()))
+        st.write("Source:", st.session_state.get("source"))
 
-    # -------- Column Types --------
+    # ---- Column Types ----
     st.subheader("Column Types")
 
     dtype_df = pd.DataFrame({
-    "Column": df.columns,
-    "Type": df.dtypes.astype(str)
+        "Column": df.columns,
+        "Type": df.dtypes.astype(str)
     })
 
     st.dataframe(dtype_df)
 
-    # -------- Missing Values --------
+    # ---- Missing Values ----
     st.subheader("Missing Values")
 
     missing = df.isnull().sum()
 
     missing_df = pd.DataFrame({
-    "Missing Count": missing,
-    "Missing %": ((missing / len(df)) * 100).round(2)
-    })
-
-     
-    missing_df = missing_df.sort_values(by="Missing Count", ascending=False)
+        "Missing Count": missing,
+        "Missing %": ((missing / len(df)) * 100).round(2)
+    }).sort_values(by="Missing Count", ascending=False)
 
     st.dataframe(missing_df)
 
-    # -------- Categorical Summary --------
+    # ---- Categorical ----
     cat_df = df.select_dtypes(include=["object", "string"])
 
-    if cat_df.shape[1] > 0:
+    if not cat_df.empty:
         st.subheader("Categorical Summary")
         st.dataframe(cat_df.describe())
     else:
         st.info("No categorical columns found.")
-    # -------- Numeric Summary --------
-    st.subheader("Summary Statistics")
-    st.dataframe(df.describe())
 
-# ------------------ Reset ------------------
+    # ---- Numeric ----
+    num_df = df.select_dtypes(include="number")
+
+    if not num_df.empty:
+        st.subheader("Summary Statistics")
+        st.dataframe(num_df.describe())
+    else:
+        st.info("No numeric columns found.")
+
+else:
+    st.info("No dataset loaded. Please upload a file.")
+
+
+# ------------------ RESET ------------------
 
 if st.button("Reset Session"):
     st.session_state.clear()
     st.rerun()
-if st.session_state.df is None:
+
+# ------------------ EMPTY STATE ------------------
+
+if st.session_state.get("df") is None:
     st.info("No dataset loaded. Please upload a file or connect Google Sheets.")
+    
