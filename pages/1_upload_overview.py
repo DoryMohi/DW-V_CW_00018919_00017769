@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 
 # ------------------ SESSION STATE ------------------
+if "uploader_key" not in st.session_state:
+    st.session_state["uploader_key"] = 0
 
 if "df" not in st.session_state:
     st.session_state["df"] = None
@@ -20,8 +22,11 @@ st.title("Page A — Upload & Overview")
 
 # ------------------ FILE UPLOAD ------------------
 
-uploaded_file = st.file_uploader("Upload File", type=["csv", "xlsx", "json"])
-
+uploaded_file = st.file_uploader(
+    "Upload File",
+    type=["csv", "xlsx", "json"],
+    key=f"uploader_{st.session_state['uploader_key']}"
+)
 if uploaded_file is not None:
     
     try:
@@ -149,16 +154,17 @@ if df is not None:
     else:
         st.info("No numeric columns found.")
 
-else:
-    st.info("No dataset loaded. Please upload a file.")
+
+    
 
 
 # ------------------ RESET ------------------
-
 if st.button("Reset Session"):
     st.session_state.clear()
-    st.rerun()
 
+    st.session_state["uploader_key"] = st.session_state.get("uploader_key", 0) + 1
+
+    st.rerun()
 # ------------------ EMPTY STATE ------------------
 
 if st.session_state.get("df") is None:
