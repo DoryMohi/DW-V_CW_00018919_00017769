@@ -51,6 +51,7 @@ if uploaded_file is not None:
                 st.error("Uploaded file is empty.")
             else:
                 st.session_state["df"] = df
+                st.session_state["original_df"] = df.copy()
                 st.session_state["source"] = uploaded_file.name
                 st.session_state["log"].append(f"Uploaded file: {uploaded_file.name}")
 
@@ -92,8 +93,6 @@ if st.button("Load Google Sheet"):
 
 
 # ------------------ DISPLAY DATA ------------------
-
-df = st.session_state.get("df")
 
 df = st.session_state.get("df")
 
