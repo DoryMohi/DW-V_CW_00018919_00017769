@@ -241,7 +241,7 @@ else:
     colA, colB = st.columns([1, 3])
 
     with colA:
-        if st.button("Remove dataset ⚠️"):
+        if st.button("Remove dataset ⚠️", type="primary"):
             st.session_state["df"] = None
             st.session_state["uploader_key"] += 1
             st.rerun()
