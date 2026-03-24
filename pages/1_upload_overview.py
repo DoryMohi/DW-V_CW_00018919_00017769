@@ -89,16 +89,18 @@ Upload your data or connect a source to begin analysis.
 
 
 # ------------------ FUNCTIONS ------------------
-def log_upload(name, df):
-    if st.session_state["last_uploaded"] != name:
-        rows, cols = df.shape
+def log_upload(operation, columns, method="-", action="-", affected=None, details=""):
+    st.session_state["log"].append({
+        "time": pd.Timestamp.now().strftime("%H:%M:%S"),
+        "operation": operation,
+        "columns": columns,
+        "method": method,
+        "action": action,
+        "affected": affected,
+        "details": details
+    })
 
-        st.session_state["log"].append(
-            f"<b>Upload </b> → {name}  •  <b>Rows:</b> {rows}  •  <b>Columns:</b> {cols}  •  <b>Sample Columns:</b> {list(df.columns[:3])}..."
-        )
-
-        st.session_state["last_uploaded"] = name
-
+    # keep last 20 logs only
     if len(st.session_state["log"]) > 20:
         st.session_state["log"] = st.session_state["log"][-20:]
 
@@ -125,7 +127,16 @@ def load_file(uploaded_file):
         st.session_state["original_df"] = df.copy()
         st.session_state["source"] = uploaded_file.name
 
-        log_upload(uploaded_file.name, df)
+        rows, cols = df.shape
+
+        log_upload(
+            operation="Upload (CSV,XLSX,JSON)",
+            columns="All",
+            method=uploaded_file.name,
+            action="File loaded",
+            affected=rows,
+            details=f"{cols} columns"
+        )
 
         st.success(f"✔ File '{uploaded_file.name}' loaded successfully")
         st.rerun()
@@ -155,7 +166,16 @@ def load_google_sheet(sheet_url):
         st.session_state["original_df"] = df.copy()
         st.session_state["source"] = "Google Sheets"
 
-        log_upload("Google Sheets", df)
+        rows, cols = df.shape
+
+        log_upload(
+            operation="Upload (Google Sheets)",
+            columns="All",
+            method="Google Sheets",
+            action="File loaded",
+            affected=rows,
+            details=f"{cols} columns"
+        )
 
         st.success("✔ Google Sheet loaded successfully")
         st.rerun()
@@ -234,14 +254,14 @@ else:
     st.caption(f"Source: {source}")
 
     # -------- PREVIEW --------
-    st.markdown('<div class="section-title">Preview</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title"> Data Preview</div>', unsafe_allow_html=True)
     st.dataframe(df.head(10), use_container_width=True)
 
     # -------- ACTIONS --------
     colA, colB = st.columns([1, 3])
 
     with colA:
-        if st.button("Remove dataset ⚠️", type="primary"):
+        if st.button("Remove dataset ", type="primary"):
             st.session_state["df"] = None
             st.session_state["uploader_key"] += 1
             st.rerun()
@@ -302,25 +322,21 @@ else:
         st.dataframe(num_df.describe(), use_container_width=True)
 
     # -------- LOG --------
-    st.markdown('<div class="section-title">Transformation Log</div>', unsafe_allow_html=True)
+    st.markdown("## Transformation Log")
 
     if st.session_state["log"]:
-        for i, step in enumerate(st.session_state["log"], 1):
+        for i, entry in enumerate(st.session_state["log"], 1):
             st.markdown(f"""
-            <div style="
-                background:#F9FAFB;
-                padding:10px 14px;
-                border-radius:8px;
-                border:1px solid #E5E7EB;
-                margin-bottom:6px;
-                font-size:14px;
-            ">
-                <b>{i}.</b> {step}
-            </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.caption("No transformations yet.")
+    **{i}. {entry['operation']}**
 
+    - Column: `{entry['columns']}`
+    - Method: `{entry['method']}`
+    - Action: `{entry['action']}`
+    - Details: `{entry.get('details', '-')}`
+    - Affected: `{entry['affected']}`
+    """)
+    else:
+        st.info("No transformations yet.")
 
 # ------------------ RESET ------------------
 if st.button("Reset Session", type="primary"):
