@@ -1100,7 +1100,7 @@ if st.button("Rename Column"):
         st.session_state["df"] = df_copy
 
         st.success(f"Column renamed: '{rename_col}' → '{new_name}'")
-
+st.markdown("---")
 st.subheader("Drop Columns")
 
 drop_cols = st.multiselect("Select columns to drop", df.columns)
@@ -1136,6 +1136,7 @@ if st.button("Drop Selected Columns"):
         st.session_state["df"] = df_copy
 
 
+st.markdown("---")
 
 st.subheader("Create New Column")
 
@@ -1157,6 +1158,8 @@ else:
         col2 = st.selectbox("Column 2", num_cols)
     else:
         col2 = None
+
+
 if st.button("Create Column"):
     if not new_col_name.strip():
         st.warning("Enter column name.")
@@ -1211,6 +1214,7 @@ if st.button("Create Column"):
 
         except Exception as e:
             st.error(f"Error: {e}")
+st.markdown("---")
 
 st.subheader("Binning (Discretization)")
 
@@ -1287,6 +1291,8 @@ if st.button("Apply Binning"):
                
         except Exception as e:
             st.error(f"Error: {e}")
+st.markdown("---")
+
   # ------------------ Download Cleaned Dataset ------------------
 
 st.subheader("Download Cleaned Dataset")
