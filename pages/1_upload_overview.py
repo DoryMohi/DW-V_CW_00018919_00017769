@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 
+if "history" not in st.session_state:
+    st.session_state["history"] = []
 # ------------------ STYLE ------------------
 st.markdown("""
 <style>
@@ -262,6 +264,7 @@ else:
 
     with colA:
         if st.button("Remove dataset ", type="primary"):
+            st.session_state["history"].append(df.copy())
             st.session_state["df"] = None
             st.session_state["uploader_key"] += 1
             st.rerun()
@@ -322,21 +325,53 @@ else:
         st.dataframe(num_df.describe(), use_container_width=True)
 
     # -------- LOG --------
-    st.markdown("## Transformation Log")
+st.markdown("## Transformation Log")
 
-    if st.session_state["log"]:
-        for i, entry in enumerate(st.session_state["log"], 1):
+logs = st.session_state.get("log", [])
+col1, col2 = st.columns([1, 3])
+
+with col1:
+    if st.button("↩️ Undo Last Step"):
+        if st.session_state["history"]:
+            st.session_state["df"] = st.session_state["history"].pop()
+            st.success("Last action undone")
+            st.rerun()
+        else:
+            st.warning("No history to undo")
+
+logs = st.session_state.get("log", [])
+if logs:
+    st.caption(f"{len(logs)} total operations")
+
+    # ✅ show only last 10
+    recent_logs = logs[-10:]
+
+    for i, entry in enumerate(reversed(recent_logs), 1):
+        st.markdown(f"""
+**{i}. {entry['operation']}**
+
+- Column: `{entry['columns']}`
+- Method: `{entry['method']}`
+- Action: `{entry['action']}`
+- Details: `{entry.get('details', '-')}`
+- Affected: `{entry['affected']}`
+""")
+
+    # ✅ full history (optional)
+    with st.expander("Show full log history"):
+        for i, entry in enumerate(reversed(logs), 1):
             st.markdown(f"""
-    **{i}. {entry['operation']}**
+**{i}. {entry['operation']}**
 
-    - Column: `{entry['columns']}`
-    - Method: `{entry['method']}`
-    - Action: `{entry['action']}`
-    - Details: `{entry.get('details', '-')}`
-    - Affected: `{entry['affected']}`
-    """)
-    else:
-        st.info("No transformations yet.")
+- Column: `{entry['columns']}`
+- Method: `{entry['method']}`
+- Action: `{entry['action']}`
+- Details: `{entry.get('details', '-')}`
+- Affected: `{entry['affected']}`
+""")
+
+else:
+    st.info("No transformations yet.")
 
 # ------------------ RESET ------------------
 if st.button("Reset Session", type="primary"):

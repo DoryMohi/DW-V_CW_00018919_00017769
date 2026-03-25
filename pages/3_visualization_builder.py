@@ -1,259 +1,490 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
+import datetime
 
 st.title("Page C — Visualization Builder")
 
 # =========================
-# Dataset Selection
+# LOAD CLEANED DATA
 # =========================
-
-st.subheader("Choose Dataset")
-
-if "df" in st.session_state and st.session_state["df"] is not None:
-    df = st.session_state["df"]
-    st.success("Using uploaded dataset")
-
-else:
-    dataset_choice = st.selectbox(
-        "Select Dataset",
-        ["Flights", "Healthcare", "Shopping"]
-    )
-
-    if dataset_choice == "Flights":
-        df = pd.read_csv("sample_data/flights_dataset.csv")
-    elif dataset_choice == "Healthcare":
-        df = pd.read_csv("sample_data/healthcare_dataset_modified.csv")
-    else:
-        df = pd.read_csv("sample_data/shopping_trends_updated_modified.csv")
-
-    st.info(f"Using {dataset_choice} dataset")
-
-if df is None:
-    st.error("No dataset loaded")
+if "df" not in st.session_state or st.session_state["df"] is None:
+    st.error("No dataset available. Please upload and clean data first.")
     st.stop()
 
-# =========================
-# DATA QUALITY CHECK
-# =========================
+df = st.session_state["df"].copy()
 
-missing = df.isnull().sum().sum()
-if missing > 0:
-    st.warning(f"Dataset contains {missing} missing values")
-else:
-    st.success("No missing values detected")
+st.success("Using current dataset (cleaned if applied)")
+st.caption(f"{df.shape[0]} rows × {df.shape[1]} columns")
 
 # =========================
-# FILTER UI (SIDEBAR)
+# DATA TYPES
 # =========================
+numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns.tolist()
+categorical_cols = [
+    col for col in df.select_dtypes(include=["object", "category", "string"]).columns
+    if 2 <= df[col].nunique() <= 10
+]
+datetime_cols = df.select_dtypes(include=["datetime64[ns]"]).columns.tolist()
+important_cats = [
+    col for col in categorical_cols
+    if df[col].nunique() <= 20
+][:10]
 
+# =========================
+# FILTERS (SIDEBAR)
+# =========================
 st.sidebar.header("🔍 Filters")
 
 filtered_df = df.copy()
 
-if st.sidebar.button("🔄 Reset Filters"):
-    st.session_state.clear()
-    st.rerun()
+# -------- CATEGORICAL --------
+with st.sidebar.expander("🏷 Categorical Filters", expanded=False):
+    for col in important_cats:
+        selected = st.multiselect(
+            col,
+            sorted(df[col].dropna().unique()),
+            key=f"cat_{col}"
+        )
 
-st.sidebar.markdown("### 📊 Dataset Info")
-st.sidebar.write("Rows:", df.shape[0])
-st.sidebar.write("Columns:", df.shape[1])
+        if selected:
+            filtered_df = filtered_df[filtered_df[col].isin(selected)]
 
-search = st.sidebar.text_input("🔎 Search column")
-
-columns_to_filter = [
-    col for col in df.columns
-    if search.lower() in col.lower()
-]
-
-# --- CATEGORICAL ---
-st.sidebar.markdown("### 🏷 Categorical Filters")
-
-for col in columns_to_filter:
-    if df[col].dtype == "object":
-
-        unique_vals = df[col].dropna().unique()
-
-        if 2 <= len(unique_vals) <= 20:
-            with st.sidebar.expander(col):
-
-                select_all = st.checkbox(f"Select all {col}", key=f"all_{col}")
-
-                if select_all:
-                    selected = unique_vals
-                else:
-                    selected = st.multiselect(
-                        f"Choose {col}",
-                        sorted(unique_vals),
-                        key=f"filter_{col}"
-                    )
-
-                if len(selected) > 0:
-                    filtered_df = filtered_df[filtered_df[col].isin(selected)]
-
-# --- NUMERIC ---
-st.sidebar.markdown("### 🔢 Numeric Filters")
-
-for col in columns_to_filter:
-    if df[col].dtype in ["int64", "float64"]:
-
+# -------- NUMERIC --------
+with st.sidebar.expander("🔢 Numeric Filters", expanded=False):
+    for col in numeric_cols:
         clean_col = df[col].dropna()
+        if clean_col.empty:
+            continue
 
-        if not clean_col.empty:
-            min_val = float(clean_col.min())
-            max_val = float(clean_col.max())
+        min_val = float(clean_col.quantile(0.01))
+        max_val = float(clean_col.quantile(0.99))
 
-            if min_val != max_val:
-                with st.sidebar.expander(col):
+        if min_val == max_val:
+            continue
 
-                    selected_range = st.slider(
-                        f"{col} range",
-                        min_val,
-                        max_val,
-                        (min_val, max_val),
-                        key=f"range_{col}"
-                    )
+        selected = st.slider(
+            col,
+            min_val,
+            max_val,
+            (min_val, max_val),
+            key=f"num_{col}"
+        )
 
-                    filtered_df = filtered_df[
-                        (filtered_df[col] >= selected_range[0]) &
-                        (filtered_df[col] <= selected_range[1])
-                    ]
-
+        # Only filter if user actually changed range
+        if selected != (min_val, max_val):
+            filtered_df = filtered_df[
+                (filtered_df[col] >= selected[0]) &
+                (filtered_df[col] <= selected[1])
+            ]
 # =========================
-# SHOW FILTER RESULT
+# PREVIEW
 # =========================
-
 st.subheader("Filtered Data")
 
 col1, col2 = st.columns(2)
-col1.metric("Rows After Filtering", len(filtered_df))
+col1.metric("Rows", len(filtered_df))
 col2.metric("Columns", filtered_df.shape[1])
 
 st.dataframe(filtered_df.head())
 
-# DOWNLOAD BUTTON 
-csv = filtered_df.to_csv(index=False).encode('utf-8')
-st.download_button(
-    "⬇ Download Filtered Data",
-    csv,
-    "filtered_data.csv",
-    "text/csv"
-)
-
-# STOP if empty
 if filtered_df.empty:
-    st.error("No data after filtering. Adjust filters.")
+    st.error("No data after filtering.")
     st.stop()
 
 # =========================
-# PREPARE COLUMNS
+# CHART CONFIG
 # =========================
-
-columns = [
-    col for col in filtered_df.columns
-    if "id" not in col.lower() and "url" not in col.lower()
-]
-
-numeric_cols = filtered_df.select_dtypes(
-    include=['int64', 'float64']
-).columns.tolist()
-
-# =========================
-# QUICK INSIGHT
-# =========================
-
-st.subheader("📊 Quick Insight")
-
-if len(numeric_cols) >= 2:
-    st.info(f"Suggestion: Try Scatter plot between {numeric_cols[0]} and {numeric_cols[1]}")
-
-# =========================
-# CHART SETTINGS
-# =========================
+st.subheader("📊 Build Chart")
 
 chart_type = st.selectbox(
-    "Select Chart Type",
-    ["Scatter", "Line", "Bar", "Histogram", "Boxplot", "Pie", "Heatmap"]
+    "Chart Type",
+    ["Histogram", "Boxplot", "Scatter", "Line", "Bar", "Heatmap"]
 )
 
-if chart_type in ["Scatter", "Line"]:
-    x_col = st.selectbox("Select X-axis (numeric)", numeric_cols)
-else:
-    x_col = st.selectbox("Select X-axis", columns)
-
-y_col = None
-if chart_type not in ["Histogram", "Pie", "Heatmap"]:
-    y_options = [col for col in numeric_cols if col != x_col]
-    y_col = st.selectbox("Select Y-axis", y_options)
-
+x_col = y_col = color_col = agg = None
 top_n = None
-if chart_type == "Bar":
-    top_n = st.slider("Top N categories", 5, 20, 10)
+
+# =========================
+# DYNAMIC UI
+# =========================
+
+if chart_type == "Histogram":
+    x_col = st.selectbox("Numeric column", numeric_cols)
+
+elif chart_type == "Boxplot":
+    y_col = st.selectbox("Numeric column", numeric_cols)
+    valid_group_cols = [
+    col for col in categorical_cols
+    if 2 <= df[col].nunique() <= 10
+    ]
+
+    group_col = st.selectbox(
+        "Group by (optional)",
+        ["None"] + valid_group_cols
+    )
+
+elif chart_type == "Scatter":
+    x_col = st.selectbox("X (numeric)", numeric_cols)
+    y_col = st.selectbox("Y (numeric)", [c for c in numeric_cols if c != x_col])
+    color_mode = st.radio("Color mode", ["Single color", "By category"])
+
+    if color_mode == "Single color":
+        color_value = st.color_picker("Pick a color", "#1f77b4")
+        color_col = None
+    else:
+        color_col = st.selectbox("Color by category", categorical_cols)
+        color_value = None
+        
+
+elif chart_type == "Line":
+    st.info("Use 'Date Filter' function on the on the sidebar for improving readability (if needed)")
+    if not datetime_cols:
+        st.warning("No datetime column available for line chart.")
+        st.stop()
+
+    x_col = st.selectbox("Time column", datetime_cols)
+    
+    with st.sidebar.expander("📅 Date Filter", expanded=False):
+        if datetime_cols:
+            date_col = st.selectbox("Date column", datetime_cols)
+
+            df[date_col] = pd.to_datetime(df[date_col])
+
+            min_date = df[date_col].min().to_pydatetime()
+            max_date = df[date_col].max().to_pydatetime()
+
+            date_range = st.slider(
+                "Select date range",
+                min_value=min_date,
+                max_value=max_date,
+                value=(min_date, max_date)
+            )
+
+            filtered_df = filtered_df[
+                (filtered_df[date_col] >= pd.to_datetime(date_range[0])) &
+                (filtered_df[date_col] <= pd.to_datetime(date_range[1]))
+            ]
+    y_col = st.selectbox("Value", numeric_cols)
+
+    group_col = st.selectbox(
+        "Group by (optional)",
+        ["None"] + categorical_cols
+    )
+
+elif chart_type == "Bar":
+    x_col = st.selectbox("Category", categorical_cols)
+    y_col = st.selectbox("Value", numeric_cols)
+
+    color_col = st.selectbox(
+        "Group by (optional)",
+        ["None"] + categorical_cols
+    )
+
+    agg = st.selectbox("Aggregation", ["sum", "mean", "count", "median"])
+
+    if color_col != "None":
+        max_groups = df[color_col].nunique()
+        top_n = st.slider("Top N categories", 2, max_groups, min(5, max_groups))
+    else:
+        top_n = st.slider("Top N categories", 2, 20, 10)
+    
+    st.caption("Top N categories will be updated based on the filtered data.")
+
+elif chart_type == "Heatmap":
+    selected_cols = st.multiselect(
+    "Select numeric columns",
+    numeric_cols,
+    default=numeric_cols[:3]
+    )
+
+    if len(selected_cols) < 2:
+        st.warning("Select at least 2 columns.")
 
 # =========================
 # GENERATE CHART
 # =========================
-
 if st.button("Generate Chart"):
 
-    if len(filtered_df) < 2:
-        st.warning("Not enough data to plot")
-        st.stop()
+    fig, ax = plt.subplots(figsize=(7, 5))
 
-    # PERFORMANCE SAFE
-    plot_df = filtered_df.copy()
-    if len(plot_df) > 5000:
-        st.warning("Large dataset, sampling for performance")
-        plot_df = plot_df.sample(5000)
+    try:
+        if chart_type == "Histogram":
+            data = filtered_df[x_col].dropna()
 
-    with st.spinner("Generating chart..."):
+            # better bins
+            bins = min(20, max(8, int(len(data) ** 0.5)))
 
-        fig, ax = plt.subplots(figsize=(7,5))
+            counts, bins, patches = ax.hist(data, bins=bins)
 
-        try:
-            if chart_type == "Scatter":
-                data = plot_df[[x_col, y_col]].dropna()
-                ax.scatter(data[x_col], data[y_col], alpha=0.7)
-                ax.grid(True)
+            # 🔥 gradient colors
+            for i, patch in enumerate(patches):
+                patch.set_alpha(0.8)
+                patch.set_edgecolor("white")
 
-            elif chart_type == "Line":
-                data = plot_df[[x_col, y_col]].dropna().sort_values(by=x_col)
-                ax.plot(data[x_col], data[y_col], marker='o')
-                ax.grid(True)
+            # clean look
+            ax.grid(True, linestyle="--", alpha=0.3)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
 
-            elif chart_type == "Bar":
-                data = plot_df[x_col].value_counts().head(top_n)
-                ax.bar(data.index.astype(str), data.values)
+            ax.set_title(f"Distribution of {x_col}")
+            ax.set_xlabel(x_col)
+            ax.set_ylabel("Frequency")
+
+        elif chart_type == "Boxplot":
+            excluded = [
+                col for col in categorical_cols
+                if df[col].nunique() > 10
+            ]
+
+            if excluded:
+                st.caption(f"Excluded high-cardinality columns: {', '.join(excluded[:3])}...")
+            if group_col != "None":
+                groups = filtered_df[[group_col, y_col]].dropna()
+
+                data = [
+                    groups[groups[group_col] == cat][y_col]
+                    for cat in groups[group_col].unique()
+                ]
+
+                ax.boxplot(data, labels=groups[group_col].unique(), patch_artist=True)
                 plt.xticks(rotation=45)
 
-            elif chart_type == "Histogram":
-                ax.hist(plot_df[x_col].dropna())
+                ax.set_title(f"{y_col} by {group_col}")
+            else:
+                data = filtered_df[y_col].dropna()
+                ax.boxplot(data, vert=True, patch_artist=True)
 
-            elif chart_type == "Boxplot":
-                ax.boxplot(plot_df[y_col].dropna())
+                ax.set_title(f"Boxplot of {y_col}")
 
-            elif chart_type == "Pie":
-                data = plot_df[x_col].value_counts().head(10)
-                ax.pie(data, labels=data.index, autopct='%1.1f%%')
+            ax.set_ylabel(y_col)
+            ax.grid(True, linestyle="--", alpha=0.3)
 
-            elif chart_type == "Heatmap":
-                corr = plot_df[numeric_cols].corr()
-                cax = ax.matshow(corr)
-                fig.colorbar(cax)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
 
-                ax.set_xticks(range(len(corr.columns)))
-                ax.set_yticks(range(len(corr.columns)))
-                ax.set_xticklabels(corr.columns, rotation=90)
-                ax.set_yticklabels(corr.columns)
+        elif chart_type == "Scatter":
+            data_cols = [x_col, y_col]
+            if color_mode == "By category" and not categorical_cols:
+                st.warning("No categorical columns available for coloring.")
+            
+            if color_mode == "By category" and color_col:
+                data_cols.append(color_col)
 
-        except Exception as e:
-            st.error(f"Error: {e}")
+            data = filtered_df[data_cols].dropna()
 
-        ax.set_title(chart_type)
+            plt.style.use("seaborn-v0_8")
 
-        if x_col:
+            if color_mode == "By category" and color_col is not None:
+                st.info("Tip: Too many categories may reduce readability. Start from filtering")
+                for cat, subset in data.groupby(color_col):
+                    x = subset[x_col] + np.random.normal(0, 0.2, size=len(subset))
+                    ax.scatter(
+                        x,
+                        subset[y_col],
+                        label=str(cat),
+                        alpha=0.5,
+                        s=25
+                    )
+                ax.legend(title=color_col, bbox_to_anchor=(1.05, 1), loc='upper left')
+
+
+            else:
+                ax.scatter(
+                    data[x_col],
+                    data[y_col],
+                    color=color_value,
+                    alpha=0.7,
+                    s=25
+                )
+            ax.set_title(f"{x_col} vs {y_col}", fontsize=14)
             ax.set_xlabel(x_col)
-        if y_col:
+            ax.set_ylabel(y_col)
+            ax.grid(True, linestyle="--", alpha=0.3)
+            
+
+
+        elif chart_type == "Line":
+            import matplotlib.dates as mdates
+
+            data = filtered_df[[x_col, y_col]].dropna()
+            data = data.sort_values(by=x_col)
+
+            if group_col != "None":
+                for cat, subset in filtered_df.groupby(group_col):
+                    subset = subset[[x_col, y_col]].dropna()
+                    subset = subset.sort_values(by=x_col)
+
+                    subset = subset.groupby(x_col)[y_col].mean().reset_index()
+
+                    # 🔥 smoothing
+                    subset = subset.groupby(x_col)[y_col].mean().reset_index()
+                    subset[y_col] = subset[y_col].rolling(window=60, min_periods=10).mean()
+
+                    ax.plot(
+                        subset[x_col],
+                        subset[y_col],
+                        label=str(cat),
+                        linewidth=2
+                    )
+
+                ax.legend(
+                    title=group_col,
+                    bbox_to_anchor=(1.05, 1),
+                    loc='upper left'
+                )
+
+            else:
+                data = data.groupby(x_col)[y_col].mean().reset_index()
+
+                # 🔥 smoothing
+                data[y_col] = data[y_col].rolling(window=60, min_periods=1).mean()
+
+                ax.plot(
+                    data[x_col],
+                    data[y_col],
+                    color="blue",
+                    linewidth=2
+                )
+
+            ax.set_title(f"Smoothed {y_col} over {x_col}")
+            ax.set_xlabel(x_col)
             ax.set_ylabel(y_col)
 
-        st.pyplot(fig)
+
+            # ✅ Clean date axis
+            ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+            plt.xticks(rotation=30)
+
+            # ✅ Clean Y ticks
+            ax.yaxis.set_major_locator(plt.MaxNLocator(6))
+
+            # ✅ Light grid
+            ax.grid(True, linestyle="--", alpha=0.2)
+
+            # ✅ Remove ugly borders
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+
+            # Optional: slightly stronger axes
+            ax.spines['left'].set_linewidth(1.2)
+            ax.spines['bottom'].set_linewidth(1.2)
+
+            # prevent legend cut-off
+            plt.tight_layout()
+
+        elif chart_type == "Bar":
+            import numpy as np
+
+            fig, ax = plt.subplots(figsize=(8, 5))
+
+            # =========================
+            # GROUPED BAR
+            # =========================
+            if color_col != "None":
+
+                # calculate on full dataset
+                base_grouped = df.groupby([x_col, color_col])[y_col].mean().unstack()
+                top_groups = base_grouped.mean().sort_values(ascending=False).head(top_n).index
+
+                # apply to filtered
+                grouped = filtered_df.groupby([x_col, color_col])[y_col].mean().unstack()
+                grouped = grouped[top_groups]
+
+                if grouped.shape[1] > 5:
+                    st.warning("Too many categories for grouped bar chart. Consider filtering.")
+
+                x = np.arange(len(grouped.index))
+                width = 0.8 / len(grouped.columns)
+
+                for i, col in enumerate(grouped.columns):
+                    ax.bar(
+                        x + i * width,
+                        grouped[col],
+                        width=width,
+                        label=str(col),
+                        alpha=0.9
+                    )
+
+                ax.set_xticks(x + width * (len(grouped.columns) - 1) / 2)
+                ax.set_xticklabels(grouped.index.astype(str), rotation=30)
+
+                ax.legend(
+                    title=color_col,
+                    bbox_to_anchor=(1.05, 1),
+                    loc='upper left'
+                )
+
+            # =========================
+            # SIMPLE BAR
+            # =========================
+            else:
+                grouped = filtered_df.groupby(x_col)[y_col].mean() \
+                    .sort_values(ascending=False).head(top_n)
+
+                bars = ax.bar(grouped.index.astype(str), grouped.values)
+
+                for bar in bars:
+                    bar.set_alpha(0.85)
+
+            # =========================
+            # STYLE
+            # =========================
+            ax.set_title(f"{y_col} by {x_col}", fontsize=14)
+            ax.set_xlabel(x_col)
+            ax.set_ylabel(y_col)
+
+            ax.grid(True, axis='y', linestyle="--", alpha=0.2)
+
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+
+            plt.tight_layout()
+
+        elif chart_type == "Heatmap":
+            import numpy as np
+
+            # Create 1–5 scales
+            likelihood = np.arange(1, 6)
+            severity = np.arange(1, 6)
+            corr = filtered_df[selected_cols].corr()
+
+            fig, ax = plt.subplots(figsize=(6, 5))
+
+            cax = ax.imshow(corr, cmap="coolwarm", vmin=-1, vmax=1)
+
+            # ticks
+            ax.set_xticks(range(len(corr.columns)))
+            ax.set_yticks(range(len(corr.columns)))
+
+            ax.set_xticklabels(corr.columns, rotation=45, ha="right")
+            ax.set_yticklabels(corr.columns)
+
+            # values inside cells
+            for i in range(len(corr)):
+                for j in range(len(corr)):
+                    ax.text(j, i, f"{corr.iloc[i, j]:.2f}".replace("-0.00", "0.00"),
+                            ha="center", va="center", color="black")
+
+            # color bar
+            fig.colorbar(cax)
+
+            # style
+            ax.set_title("Correlation between Selected Features", fontsize=14)
+            ax.grid(False)
+
+            plt.tight_layout()
+
+    except Exception as e:
+        st.error(f"Error: {e}")
+        st.stop()
+
+
+    if x_col:
+        ax.set_xlabel(x_col)
+    if y_col:
+        ax.set_ylabel(y_col)
+
+    st.pyplot(fig)

@@ -174,7 +174,6 @@ def feature_engineering_section(df, add_log):
         if formula_type in ["Addition", "Subtraction", "Division"]:
             if len(num_cols) < 2:
                 st.warning("Need at least 2 numeric columns.")
-                st.stop()
 
             col2_options = [c for c in num_cols if c != col1]
             col2 = st.selectbox("Column 2", col2_options)

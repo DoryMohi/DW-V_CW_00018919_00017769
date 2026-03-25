@@ -58,6 +58,7 @@ def missing_section(df, add_log):
         if not cols_to_drop:
             st.info("No columns exceed the selected threshold.")
         else:
+            st.session_state["history"].append(df.copy())
             df_copy = df.copy()
             before_cols = len(df.columns)
 
@@ -134,6 +135,7 @@ def missing_section(df, add_log):
             st.info(f"No missing values in '{missing_col}'. Nothing to clean.")
 
         else:
+            st.session_state["history"].append(df.copy())
             try:
                 df_copy = df.copy()
 
@@ -145,9 +147,6 @@ def missing_section(df, add_log):
 
                 elif missing_action == "Fill with median":
                     df_copy[missing_col] = df_copy[missing_col].fillna(df_copy[missing_col].median())
-
-                elif missing_action == "Fill with most frequent":
-                    df_copy[missing_col] = df_copy[missing_col].fillna(df_copy[missing_col].mode()[0])
 
                 elif missing_action in ["Fill with mode", "Fill with most frequent"]:
                     mode_series = df_copy[missing_col].mode()
@@ -263,6 +262,7 @@ def duplicates_section(df, add_log):
         disabled = duplicates.empty or dup_action == "Do nothing"
 
         if st.button("Apply Duplicate Operation", disabled=disabled):
+            st.session_state["history"].append(df.copy())
             df_copy = df.copy()
             before_rows = len(df_copy)
 
@@ -295,9 +295,6 @@ def duplicates_section(df, add_log):
             }
 
             st.session_state["dup_applied"] = True
-
-            if "log" in st.session_state and dup_action != "Do nothing":
-                st.session_state["log"].append(f"Duplicates → {dup_action}")
 
             if dup_action == "Do nothing":
                 st.info("No changes applied.")
@@ -413,12 +410,13 @@ def types_section(df, add_log):
     if target_type == "Datetime" and str(current_type).startswith("datetime"):
         disabled = True
 
-    if target_type == "Numeric" and "int" in str(current_type) or "float" in str(current_type):
+    if target_type == "Numeric" and ("int" in str(current_type) or "float" in str(current_type)):
         disabled = True
 
 
     # -------- APPLY --------
     if st.button("Apply Type Conversion", disabled=disabled):
+        st.session_state["history"].append(df.copy())
 
         df_copy = df.copy()
         before_type = df[type_col].dtype
@@ -466,8 +464,13 @@ def types_section(df, add_log):
 
             # -------- LOG --------
             if "log" in st.session_state:
-                st.session_state["log"].append(
-                    f"Type → {type_col} → {target_type}"
+                add_log(
+                    operation="Type Conversion",
+                    columns=type_col,
+                    method=target_type,   # ✅ correct
+                    action="Converted",
+                    affected=len(df_copy),
+                    details=f"{before_type} → {after_type}, NaN: {before_na} → {after_na}"
                 )
 
             # -------- SUCCESS --------
@@ -532,6 +535,7 @@ def categorical_section(df, add_log):
         )
 
         if st.button("Apply Standardization"):
+            st.session_state["history"].append(df.copy())
 
             df_copy = df.copy()
 
@@ -576,6 +580,7 @@ def categorical_section(df, add_log):
             value=True
         )
         if st.button("Apply Mapping"):
+            st.session_state["history"].append(df.copy())
 
             df_copy = df.copy()
 
@@ -698,6 +703,7 @@ def categorical_section(df, add_log):
         # ------------------ APPLY ------------------
 
         if st.button("Apply Changes", key="rg_ohe_btn"):
+            st.session_state["history"].append(df.copy())
 
             df_copy = df.copy()
 
@@ -841,88 +847,89 @@ def outliers_section(df, add_log):
                 lower, upper = None, None
 
         # ------------------ SUMMARY ------------------
-    st.markdown("### 📊 Detection Summary")
+        st.markdown("### 📊 Detection Summary")
 
-    col1, col2 = st.columns(2)
+        col1, col2 = st.columns(2)
 
-    total_rows = len(df)
-    outlier_count = len(outliers)
+        total_rows = len(df)
+        outlier_count = len(outliers)
 
-    col1.metric("Total rows", total_rows)
-    col2.metric("Outliers found", outlier_count)
+        col1.metric("Total rows", total_rows)
+        col2.metric("Outliers found", outlier_count)
 
-    # ---- STATUS MESSAGE ----
-    if outlier_count == 0:
-        st.success("✔ No outliers detected. This column looks clean.")
-    else:
-        if outlier_count < 10:
-            st.info("Small number of outliers detected. Safe to handle.")
+        # ---- STATUS MESSAGE ----
+        if outlier_count == 0:
+            st.success("✔ No outliers detected. This column looks clean.")
         else:
-            st.warning("Many outliers detected. Consider cleaning.")
+            if outlier_count < 10:
+                st.info("Small number of outliers detected. Safe to handle.")
+            else:
+                st.warning("Many outliers detected. Consider cleaning.")
 
-    # ---- SHOW BOUNDS ONLY IF USEFUL ----
-    if outlier_method == "IQR" and outlier_count > 0:
-        st.caption(f"IQR bounds: [{lower:,.2f}, {upper:,.2f}]")
+        # ---- SHOW BOUNDS ONLY IF USEFUL ----
+        if outlier_method == "IQR" and outlier_count > 0:
+            st.caption(f"IQR bounds: [{lower:,.2f}, {upper:,.2f}]")
 
-    # ------------------ PREVIEW + ACTION ------------------
-    if outlier_count > 0:
+        # ------------------ PREVIEW + ACTION ------------------
+        if outlier_count > 0:
 
-        st.markdown("### 🔍 Preview")
-        st.dataframe(outliers.head(10), use_container_width=True)
+            st.markdown("### 🔍 Preview")
+            st.dataframe(outliers.head(10), use_container_width=True)
 
-        # ---- ACTION INFO ----
-        if outlier_action == "Remove outliers":
-            st.warning(f"{outlier_count} rows will be removed")
-        elif outlier_action == "Cap (Winsorize)":
-            st.info(f"{outlier_count} values will be capped")
+            # ---- ACTION INFO ----
+            if outlier_action == "Remove outliers":
+                st.warning(f"{outlier_count} rows will be removed")
+            elif outlier_action == "Cap (Winsorize)":
+                st.info(f"{outlier_count} values will be capped")
 
-        # ---- APPLY BUTTON ----
-        if outlier_action != "Do nothing":
-            if st.button("Apply Outlier Operation", type="primary", use_container_width=True):
+            # ---- APPLY BUTTON ----
+            if outlier_action != "Do nothing":
+                if st.button("Apply Outlier Operation", type="primary", use_container_width=True):
+                    st.session_state["history"].append(df.copy())
 
-                df_copy = df.copy()
-                before_rows = len(df)
+                    df_copy = df.copy()
+                    before_rows = len(df)
 
-                if outlier_action == "Remove outliers":
+                    if outlier_action == "Remove outliers":
 
-                    if outlier_method == "IQR":
-                        df_copy = df_copy[
-                            (df_copy[out_col] >= lower) &
-                            (df_copy[out_col] <= upper)
-                        ]
+                        if outlier_method == "IQR":
+                            df_copy = df_copy[
+                                (df_copy[out_col] >= lower) &
+                                (df_copy[out_col] <= upper)
+                            ]
 
-                    elif outlier_method == "Z-score":
-                        std = df_copy[out_col].std()
-                        if std != 0:
-                            z_scores = (df_copy[out_col] - df_copy[out_col].mean()) / std
-                            df_copy = df_copy[np.abs(z_scores) <= 3]
+                        elif outlier_method == "Z-score":
+                            std = df_copy[out_col].std()
+                            if std != 0:
+                                z_scores = (df_copy[out_col] - df_copy[out_col].mean()) / std
+                                df_copy = df_copy[np.abs(z_scores) <= 3]
 
-                    removed = before_rows - len(df_copy)
-                    affected = removed
-                    st.write(f"Rows removed: {removed}")
+                        removed = before_rows - len(df_copy)
+                        affected = removed
+                        st.write(f"Rows removed: {removed}")
 
-                elif outlier_action == "Cap (Winsorize)":
+                    elif outlier_action == "Cap (Winsorize)":
 
-                    if outlier_method == "IQR":
-                        before_values = df_copy[out_col].copy()
-                        df_copy[out_col] = df_copy[out_col].clip(lower, upper)
-                        affected = (before_values != df_copy[out_col]).sum()
-                        st.write(f"Values capped: {affected}")
-                    else:
-                        st.warning("Capping not supported for Z-score")
-                        affected = 0
+                        if outlier_method == "IQR":
+                            before_values = df_copy[out_col].copy()
+                            df_copy[out_col] = df_copy[out_col].clip(lower, upper)
+                            affected = (before_values != df_copy[out_col]).sum()
+                            st.write(f"Values capped: {affected}")
+                        else:
+                            st.warning("Capping not supported for Z-score")
+                            affected = 0
 
-                add_log(
-                    operation="Outliers",
-                    columns=out_col,
-                    method=outlier_method,
-                    action=outlier_action,
-                    affected=int(affected),
-                    details=f"{before_rows} → {len(df_copy)} rows"
-                )
+                    add_log(
+                        operation="Outliers",
+                        columns=out_col,
+                        method=outlier_method,
+                        action=outlier_action,
+                        affected=int(affected),
+                        details=f"{before_rows} → {len(df_copy)} rows"
+                    )
 
-                st.session_state["df"] = df_copy
-                st.success("Changes applied!")
-                st.rerun()
+                    st.session_state["df"] = df_copy
+                    st.success("Changes applied!")
+                    st.rerun()
 
     st.markdown("---")
