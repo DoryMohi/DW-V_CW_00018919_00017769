@@ -93,6 +93,8 @@ if filtered_df.empty:
     st.error("No data after filtering.")
     st.stop()
 
+
+
 # =========================
 # CHART CONFIG
 # =========================
@@ -175,28 +177,37 @@ elif chart_type == "Line":
 
 elif chart_type == "Bar":
     x_col = st.selectbox("Category", categorical_cols)
-    y_col = st.selectbox("Value", numeric_cols)
+
+    agg = st.selectbox("Aggregation", ["count", "sum", "mean", "median"])
+
+    if agg != "count":
+        y_col = st.selectbox("Value", numeric_cols)
+    else:
+        y_col = None
 
     color_col = st.selectbox(
         "Group by (optional)",
         ["None"] + categorical_cols
     )
 
-    agg = st.selectbox("Aggregation", ["sum", "mean", "count", "median"])
-
+    # safe top_n
     if color_col != "None":
         max_groups = df[color_col].nunique()
+    else:
+        max_groups = df[x_col].nunique()
+
+    if max_groups > 2:
         top_n = st.slider("Top N categories", 2, max_groups, min(5, max_groups))
     else:
-        top_n = st.slider("Top N categories", 2, 20, 10)
-    
+        top_n = max_groups
+        
     st.caption("Top N categories will be updated based on the filtered data.")
 
 elif chart_type == "Heatmap":
     selected_cols = st.multiselect(
-    "Select numeric columns",
-    numeric_cols,
-    default=numeric_cols[:3]
+        "Select numeric columns",
+        numeric_cols,
+        default=numeric_cols[:5]  # NOT just 2–3
     )
 
     if len(selected_cols) < 2:
@@ -216,12 +227,16 @@ if st.button("Generate Chart"):
             # better bins
             bins = min(20, max(8, int(len(data) ** 0.5)))
 
-            counts, bins, patches = ax.hist(data, bins=bins)
-
-            # 🔥 gradient colors
-            for i, patch in enumerate(patches):
-                patch.set_alpha(0.8)
-                patch.set_edgecolor("white")
+            counts, bins, patches = ax.hist(
+                data, 
+                bins=bins,
+                color= "#2A6F97",
+                edgecolor="white",
+                alpha=0.85
+            )
+            for patch in patches:
+                patch.set_facecolor("#2A6F97")
+                patch.set_alpha(0.85)
 
             # clean look
             ax.grid(True, linestyle="--", alpha=0.3)
@@ -248,7 +263,28 @@ if st.button("Generate Chart"):
                     for cat in groups[group_col].unique()
                 ]
 
-                ax.boxplot(data, labels=groups[group_col].unique(), patch_artist=True)
+                bp = ax.boxplot(
+                    data,
+                    labels=groups[group_col].unique(),
+                    patch_artist=True
+                )
+
+                palette = ["#2A6F97", "#52B788", "#F4A261", "#8E7DBE", "#E76F51"]
+
+                for patch, color in zip(bp["boxes"], palette):
+                    patch.set_facecolor(color)
+                    patch.set_alpha(0.8)
+
+                # style lines
+                for median in bp["medians"]:
+                    median.set_color("black")
+                    median.set_linewidth(2)
+
+                for whisker in bp["whiskers"]:
+                    whisker.set_color("#555")
+
+                for cap in bp["caps"]:
+                    cap.set_color("#555")
                 plt.xticks(rotation=45)
 
                 ax.set_title(f"{y_col} by {group_col}")
@@ -278,14 +314,18 @@ if st.button("Generate Chart"):
 
             if color_mode == "By category" and color_col is not None:
                 st.info("Tip: Too many categories may reduce readability. Start from filtering")
-                for cat, subset in data.groupby(color_col):
+                palette = ["#2A6F97", "#52B788", "#F4A261", "#8E7DBE", "#E76F51"]
+
+                for i, (cat, subset) in enumerate(data.groupby(color_col)):
                     x = subset[x_col] + np.random.normal(0, 0.2, size=len(subset))
+
                     ax.scatter(
                         x,
                         subset[y_col],
                         label=str(cat),
-                        alpha=0.5,
-                        s=25
+                        color=palette[i % len(palette)],   # 🎯 controlled colors
+                        alpha=0.6,
+                        s=30
                     )
                 ax.legend(title=color_col, bbox_to_anchor=(1.05, 1), loc='upper left')
 
@@ -308,148 +348,168 @@ if st.button("Generate Chart"):
         elif chart_type == "Line":
             import matplotlib.dates as mdates
 
+            if x_col is None or y_col is None:
+                st.warning("Please select both time and value columns.")
+                st.stop()
+
             data = filtered_df[[x_col, y_col]].dropna()
-            data = data.sort_values(by=x_col)
 
+            if data.empty:
+                st.warning("No data to plot.")
+                st.stop()
+
+            # ensure datetime
+            data[x_col] = pd.to_datetime(data[x_col])
+
+            palette = ["#2A6F97", "#52B788", "#F4A261", "#8E7DBE", "#E76F51"]
+
+            # =========================
+            # WITH GROUPING
+            # =========================
             if group_col != "None":
-                for cat, subset in filtered_df.groupby(group_col):
+                for i, (cat, subset) in enumerate(filtered_df.groupby(group_col)):
                     subset = subset[[x_col, y_col]].dropna()
-                    subset = subset.sort_values(by=x_col)
 
-                    subset = subset.groupby(x_col)[y_col].mean().reset_index()
+                    if subset.empty:
+                        continue
 
-                    # 🔥 smoothing
-                    subset = subset.groupby(x_col)[y_col].mean().reset_index()
-                    subset[y_col] = subset[y_col].rolling(window=60, min_periods=10).mean()
+                    subset[x_col] = pd.to_datetime(subset[x_col])
+
+                    # 🔥 MONTHLY AGGREGATION
+                    subset["month"] = subset[x_col].dt.to_period("M")
+                    subset = subset.groupby("month")[y_col].mean().reset_index()
+
+                    # convert back to timestamp for plotting
+                    subset["month"] = subset["month"].dt.to_timestamp()
+
+                    # 🔥 SMOOTHING
+                    subset[y_col] = subset[y_col].rolling(window=3, min_periods=1).mean()
 
                     ax.plot(
-                        subset[x_col],
+                        subset["month"],
                         subset[y_col],
                         label=str(cat),
-                        linewidth=2
-                    )
-
-                ax.legend(
-                    title=group_col,
-                    bbox_to_anchor=(1.05, 1),
-                    loc='upper left'
-                )
-
-            else:
-                data = data.groupby(x_col)[y_col].mean().reset_index()
-
-                # 🔥 smoothing
-                data[y_col] = data[y_col].rolling(window=60, min_periods=1).mean()
-
-                ax.plot(
-                    data[x_col],
-                    data[y_col],
-                    color="blue",
-                    linewidth=2
-                )
-
-            ax.set_title(f"Smoothed {y_col} over {x_col}")
-            ax.set_xlabel(x_col)
-            ax.set_ylabel(y_col)
-
-
-            # ✅ Clean date axis
-            ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
-            ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-            plt.xticks(rotation=30)
-
-            # ✅ Clean Y ticks
-            ax.yaxis.set_major_locator(plt.MaxNLocator(6))
-
-            # ✅ Light grid
-            ax.grid(True, linestyle="--", alpha=0.2)
-
-            # ✅ Remove ugly borders
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-
-            # Optional: slightly stronger axes
-            ax.spines['left'].set_linewidth(1.2)
-            ax.spines['bottom'].set_linewidth(1.2)
-
-            # prevent legend cut-off
-            plt.tight_layout()
-
-        elif chart_type == "Bar":
-            import numpy as np
-
-            fig, ax = plt.subplots(figsize=(8, 5))
-
-            # =========================
-            # GROUPED BAR
-            # =========================
-            if color_col != "None":
-
-                # calculate on full dataset
-                base_grouped = df.groupby([x_col, color_col])[y_col].mean().unstack()
-                top_groups = base_grouped.mean().sort_values(ascending=False).head(top_n).index
-
-                # apply to filtered
-                grouped = filtered_df.groupby([x_col, color_col])[y_col].mean().unstack()
-                grouped = grouped[top_groups]
-
-                if grouped.shape[1] > 5:
-                    st.warning("Too many categories for grouped bar chart. Consider filtering.")
-
-                x = np.arange(len(grouped.index))
-                width = 0.8 / len(grouped.columns)
-
-                for i, col in enumerate(grouped.columns):
-                    ax.bar(
-                        x + i * width,
-                        grouped[col],
-                        width=width,
-                        label=str(col),
+                        color=palette[i % len(palette)],
+                        linewidth=2.5,
                         alpha=0.9
                     )
 
-                ax.set_xticks(x + width * (len(grouped.columns) - 1) / 2)
-                ax.set_xticklabels(grouped.index.astype(str), rotation=30)
+                ax.legend(title=group_col, bbox_to_anchor=(1.05, 1), loc='upper left')
 
-                ax.legend(
-                    title=color_col,
-                    bbox_to_anchor=(1.05, 1),
-                    loc='upper left'
+            # =========================
+            # WITHOUT GROUPING
+            # =========================
+            else:
+                # 🔥 MONTHLY AGGREGATION
+                data["month"] = data[x_col].dt.to_period("M")
+                data = data.groupby("month")[y_col].mean().reset_index()
+
+                data["month"] = data["month"].dt.to_timestamp()
+
+                # 🔥 SMOOTHING
+                data[y_col] = data[y_col].rolling(window=3, min_periods=1).mean()
+
+                ax.plot(
+                    data["month"],
+                    data[y_col],
+                    color="#2A6F97",
+                    linewidth=2.5,
+                    alpha=0.9
                 )
 
             # =========================
-            # SIMPLE BAR
+            # CLEAN AXIS
             # =========================
-            else:
-                grouped = filtered_df.groupby(x_col)[y_col].mean() \
-                    .sort_values(ascending=False).head(top_n)
-
-                bars = ax.bar(grouped.index.astype(str), grouped.values)
-
-                for bar in bars:
-                    bar.set_alpha(0.85)
-
-            # =========================
-            # STYLE
-            # =========================
-            ax.set_title(f"{y_col} by {x_col}", fontsize=14)
-            ax.set_xlabel(x_col)
+            ax.set_title(f"{y_col} trend over time", fontsize=14)
+            ax.set_xlabel("Time")
             ax.set_ylabel(y_col)
 
-            ax.grid(True, axis='y', linestyle="--", alpha=0.2)
+            ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+
+            plt.xticks(rotation=30)
+
+            ax.grid(True, linestyle="--", alpha=0.2)
 
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
 
             plt.tight_layout()
+        elif chart_type == "Bar":
 
+            if filtered_df.empty:
+                st.error("No data available.")
+                st.stop()
+
+            # ======================
+            # COUNT (no y_col needed)
+            # ======================
+            if agg == "count":
+                grouped = (
+                    filtered_df[x_col]
+                    .value_counts()
+                    .head(top_n)
+                )
+
+            # ======================
+            # OTHER AGGREGATIONS
+            # ======================
+            else:
+                if y_col is None:
+                    st.warning("Select a numeric column for aggregation.")
+                    st.stop()
+
+                grouped = (
+                    filtered_df.groupby(x_col)[y_col]
+                    .agg(agg)
+                    .sort_values(ascending=False)
+                    .head(top_n)
+                )
+
+            if grouped.empty:
+                st.warning("No data to display.")
+                st.stop()
+
+            # ======================
+            # PLOT
+            # ======================
+            palette = ["#2A6F97", "#52B788", "#E76F51", "#E9C46A", "#6D597A"]
+            colors = [palette[i % len(palette)] for i in range(len(grouped))]
+
+            ax.bar(
+                grouped.index.astype(str),
+                grouped.values,
+                color=colors,
+                alpha=0.85
+            )
+
+            # labels on top
+            for i, v in enumerate(grouped.values):
+                ax.text(i, v, f"{int(v)}", ha='center', va='bottom', fontsize=9)
+
+            ax.set_title(f"{agg.capitalize()} of {x_col}")
+            ax.set_xlabel(x_col)
+            ax.set_ylabel(agg)
+
+            ax.grid(True, axis='y', linestyle="--", alpha=0.2)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+
+            plt.tight_layout()
         elif chart_type == "Heatmap":
             import numpy as np
 
             # Create 1–5 scales
             likelihood = np.arange(1, 6)
             severity = np.arange(1, 6)
-            corr = filtered_df[selected_cols].corr()
+            corr_df = filtered_df[selected_cols].copy()
+
+            # remove ID-like columns
+            corr_df = corr_df.loc[:, corr_df.nunique() > 1]
+
+            corr = corr_df.corr()
+            if (abs(corr.values[np.triu_indices_from(corr, 1)]) < 0.1).all():
+                st.info("No strong correlations found. Variables appear independent.")
 
             fig, ax = plt.subplots(figsize=(6, 5))
 

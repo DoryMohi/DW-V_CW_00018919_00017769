@@ -155,6 +155,19 @@ def missing_section(df, add_log):
                         df_copy[missing_col] = df_copy[missing_col].fillna(mode_series[0])
                     else:
                         st.warning("No mode found.")
+                elif missing_action == "Fill with constant":
+                    if value is None or value == "":
+                        st.warning("Please enter a value.")
+                    df_copy[missing_col] = df_copy[missing_col].replace(
+                            ["", " ", "NA", "None"], np.nan
+                        )
+                    if is_numeric:
+                        try:
+                            value = float(value)
+                        except:
+                            st.error("Enter a valid number.")
+
+                    df_copy[missing_col] = df_copy[missing_col].fillna(value)
                 elif missing_action == "Forward fill":
                     df_copy[missing_col] = df_copy[missing_col].ffill()
 
@@ -206,7 +219,7 @@ def missing_section(df, add_log):
                 st.write(f"Missing: {p['after_missing']}")
                 st.write(f"Rows: {p['after_rows']}")
 
-st.markdown("---")
+    st.markdown("---")
 
 def duplicates_section(df, add_log):
     st.markdown("## 🔁 Duplicates")
