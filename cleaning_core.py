@@ -458,47 +458,54 @@ def duplicates_section(df, add_log):
 def types_section(df, add_log):
     st.markdown("## 🧩 Data Types & Parsing")
 
+    if "type_msg" in st.session_state:
+        st.success(st.session_state["type_msg"])
+        del st.session_state["type_msg"]
+
     df = st.session_state["df"]
 
     # -------- SELECT COLUMN --------
     type_col = st.selectbox("Select column to convert", df.columns, key="type_col")
 
-    # Clean sample for detection
-    sample_values = (
+    # -------- CLEAN SAMPLE --------
+    clean_series = (
         df[type_col]
         .replace(["None", "none", "NA", "N/A", "", " "], pd.NA)
         .dropna()
         .astype(str)
-        .head(20)
+    )
+
+    if clean_series.empty:
+        st.warning("Column has no valid values to analyze.")
+        return
+
+    sample_values = clean_series.sample(
+        min(100, len(clean_series)),
+        random_state=42
     )
 
     current_type = df[type_col].dtype
 
-    # -------- DETECTION FUNCTIONS --------
+    # -------- DETECTION --------
     def looks_like_datetime(values):
-        converted = pd.to_datetime(values, errors="coerce", format="mixed")
-        return converted.notna().mean() > 0.7
+        parsed = pd.to_datetime(values, errors="coerce")
+        return parsed.notna().mean() > 0.7
 
     def looks_like_numeric(values):
-        try:
-            pd.to_numeric(values, errors="raise")
-            return True
-        except:
-            return False
+        parsed = pd.to_numeric(values, errors="coerce")
+        return parsed.notna().mean() > 0.7
 
-    # -------- SMART OPTIONS --------
-    if looks_like_numeric(sample_values):
-        options = ["Numeric", "Categorical"]
-
-    elif looks_like_datetime(sample_values):
+    # -------- OPTIONS --------
+    if looks_like_datetime(sample_values):
         options = ["Datetime", "Categorical"]
-
+    elif looks_like_numeric(sample_values):
+        options = ["Numeric", "Categorical"]
     else:
         options = ["Categorical"]
 
     target_type = st.selectbox("Convert to", options, key="target_type")
 
-    # -------- OPTIONS --------
+    # -------- SETTINGS --------
     parse_mode = None
     date_format = None
     clean_numeric = False
@@ -525,19 +532,16 @@ def types_section(df, add_log):
             )
             date_format = date_formats[selected_label]
 
-    if str(current_type).startswith("datetime") and target_type == "Numeric":
-        st.error("Cannot convert datetime to numeric.")
-
     if target_type == "Numeric":
         clean_numeric = st.checkbox("Clean dirty values (remove $, commas)")
 
     # -------- CURRENT TYPE --------
     st.markdown(f"**Current type:** `{current_type}`")
 
-    # -------- DISABLE LOGIC --------
+    # -------- DISABLE --------
     disabled = False
 
-    if target_type == "Datetime" and str(current_type).startswith("datetime"):
+    if str(current_type).startswith("datetime") and target_type == "Datetime":
         disabled = True
 
     if target_type == "Numeric" and ("int" in str(current_type) or "float" in str(current_type)):
@@ -546,11 +550,8 @@ def types_section(df, add_log):
     # -------- APPLY --------
     if st.button("Apply Type Conversion", disabled=disabled):
 
-        st.session_state["history"].append(df.copy())
-
         df_copy = df.copy()
 
-        # ✅ CLEAN FIRST (IMPORTANT FIX)
         df_copy[type_col] = df_copy[type_col].replace(
             ["None", "none", "NA", "N/A", "", " "],
             pd.NA
@@ -584,37 +585,47 @@ def types_section(df, add_log):
                     parsed = pd.to_datetime(
                         df_copy[type_col],
                         format=date_format,
-                        errors="coerce",
-                        exact=False
+                        errors="coerce"
                     )
+
                     if parsed.notna().mean() < 0.5:
                         parsed = pd.to_datetime(
                             df_copy[type_col],
-                            errors="coerce",
-                            format="mixed"
+                            errors="coerce"
                         )
-
                 else:
                     parsed = pd.to_datetime(
                         df_copy[type_col],
-                        errors="coerce",
-                        format="mixed"
+                        errors="coerce"
                     )
 
-                # ❗ IMPORTANT: only apply if parsing worked
                 success_ratio = parsed.notna().mean()
 
-                if success_ratio > 0.5:
-                    df_copy[type_col] = parsed
-                    if parse_mode == "Specify format" and date_format:
-                        df_copy[type_col] = df_copy[type_col].dt.strftime(date_format)
-                
-                else:
+                if success_ratio <= 0.5:
                     st.error("Could not parse this column reliably.")
+                    return
 
-                    # Optional formatting
-            
+                # ✅ SAVE HISTORY BEFORE CHANGE
+                st.session_state["history"].append(df.copy())
 
+                # ✅ MAIN COLUMN (REAL DATETIME)
+                df_copy[type_col] = parsed
+
+                # ✅ OPTIONAL FORMATTED COLUMN
+                if parse_mode == "Specify format" and date_format:
+                    formatted_col = f"{type_col}_formatted"
+
+                    df_copy[formatted_col] = parsed.dt.strftime(date_format)
+
+                    st.info(f"Formatted column created: {formatted_col}")
+
+                    st.markdown("### 👀 Preview")
+                    st.dataframe(
+                        df_copy[[type_col, formatted_col]].head(10),
+                        use_container_width=True
+                    )
+
+            # -------- AFTER --------
             after_type = df_copy[type_col].dtype
             after_na = df_copy[type_col].isna().sum()
 
@@ -632,11 +643,10 @@ def types_section(df, add_log):
             )
 
             # -------- SUCCESS --------
-            st.success("✔ Type conversion applied")
+            st.session_state["type_msg"] = f"✔ Converted to {target_type}"
 
             # -------- RESULT --------
             st.markdown("### 🔍 Result")
-            st.caption("Last operation result")
 
             col_b, col_a = st.columns(2)
 
@@ -650,12 +660,10 @@ def types_section(df, add_log):
                 st.write(f"Type: {after_type}")
                 st.write(f"Missing: {after_na}")
 
-            # -------- WARNINGS --------
+            # -------- WARNING --------
             failed = after_na - before_na
             if failed > 0:
                 st.warning(f"{failed} values could not be parsed and became NaN/NaT")
-
-            st.rerun()
 
         except Exception as e:
             st.error(f"Error: {e}")
@@ -962,9 +970,9 @@ def categorical_section(df, add_log):
                 freq = df_copy[col].value_counts(normalize=True) * 100
                 rare_values = freq[freq < threshold]
 
-                df_copy[col] = df_copy[col].apply(
-                    lambda x: "Other" if x in rare_values else x
-                )
+                keep_categories = freq[freq >= threshold].index
+
+                df_copy[col] = df[col].where(df[col].isin(keep_categories), "Other")
 
             # ---------- ENCODING ----------
             new_columns = []
@@ -1036,6 +1044,7 @@ def categorical_section(df, add_log):
 
             # optional manual clear
             if st.button("Clear result"):
+                st.session_state["history"].append(df.copy())
                 st.session_state.pop("ohe_result", None)
                 
 
@@ -1045,145 +1054,152 @@ def outliers_section(df, add_log):
     st.markdown("## Outlier Detection & Handling")
     st.caption("Detect and handle extreme values that may distort your analysis.")
 
+    df = st.session_state["df"]
+
     all_num_cols = df.select_dtypes(include=["int64", "float64"]).columns
     num_cols = [col for col in all_num_cols if df[col].nunique() > 5]
 
     if len(num_cols) == 0:
         st.info("No numeric columns available.")
-    else:
+        return
 
-        # ------------------ CONFIGURATION ------------------
-        st.markdown("### ⚙️ Configure")
+    # ------------------ CONFIG ------------------
+    st.markdown("### ⚙️ Configure")
 
-        col1, col2, col3 = st.columns(3)
+    col1, col2, col3 = st.columns(3)
 
-        with col1:
-            out_col = st.selectbox("Column", num_cols, key="outlier_col")
+    with col1:
+        out_col = st.selectbox("Column", num_cols)
 
-        with col2:
-            outlier_method = st.selectbox(
-                "Method",
-                ["IQR", "Z-score"],
-                help="IQR = robust for skewed data. Z-score = assumes normal distribution.",
-                key="outlier_method"
-            )
+    with col2:
+        outlier_method = st.selectbox("Method", ["IQR", "Z-score"])
 
-        with col3:
-            outlier_action = st.selectbox(
-                "Action",
-                ["Do nothing", "Cap (Winsorize)", "Remove outliers"],
-                help="Choose how to handle detected outliers.",
-                key="outlier_action"
-            )
+    with col3:
+        outlier_action = st.selectbox(
+            "Action",
+            ["Do nothing", "Cap (Winsorize)", "Remove outliers"]
+        )
 
-        # ------------------ DETECTION ------------------
-        if outlier_method == "IQR":
-            Q1 = df[out_col].quantile(0.25)
-            Q3 = df[out_col].quantile(0.75)
-            IQR = Q3 - Q1
+    # ------------------ DETECTION ------------------
+    df_temp = df.copy()
+    df_temp[out_col] = pd.to_numeric(df_temp[out_col], errors="coerce")
 
-            lower = Q1 - 1.5 * IQR
-            upper = Q3 + 1.5 * IQR
+    if outlier_method == "IQR":
+        Q1 = df_temp[out_col].quantile(0.25)
+        Q3 = df_temp[out_col].quantile(0.75)
+        IQR = Q3 - Q1
 
-            outliers = df[(df[out_col] < lower) | (df[out_col] > upper)]
+        if IQR == 0:
+            st.warning("No variation in this column. Cannot detect outliers.")
+            return
 
-        elif outlier_method == "Z-score":
-            std = df[out_col].std()
-            st.caption("Z-score threshold: |z| > 3")
+        lower = Q1 - 1.5 * IQR
+        upper = Q3 + 1.5 * IQR
 
-            if std == 0:
-                st.warning("Standard deviation is 0. Cannot compute Z-score.")
-                outliers = df.iloc[0:0]
-                lower, upper = None, None
-            else:
-                z_scores = (df[out_col] - df[out_col].mean()) / std
-                outliers = df[np.abs(z_scores) > 3]
-                lower, upper = None, None
+        outliers = df_temp[
+            (df_temp[out_col] < lower) | (df_temp[out_col] > upper)
+        ]
 
-        # ------------------ SUMMARY ------------------
-        st.markdown("### 📊 Detection Summary")
+    else:  # Z-score
+        std = df_temp[out_col].std()
 
-        col1, col2 = st.columns(2)
+        if std == 0:
+            st.warning("Standard deviation is 0. Cannot compute Z-score.")
+            return
 
-        total_rows = len(df)
-        outlier_count = len(outliers)
+        z_scores = (df_temp[out_col] - df_temp[out_col].mean()) / std
+        outliers = df_temp[np.abs(z_scores) > 3]
 
-        col1.metric("Total rows", total_rows)
-        col2.metric("Outliers found", outlier_count)
+        lower, upper = None, None
 
-        # ---- STATUS MESSAGE ----
-        if outlier_count == 0:
-            st.success("✔ No outliers detected. This column looks clean.")
-        else:
-            if outlier_count < 10:
-                st.info("Small number of outliers detected. Safe to handle.")
-            else:
-                st.warning("Many outliers detected. Consider cleaning.")
+    # ------------------ SUMMARY ------------------
+    st.markdown("### 📊 Detection Summary")
 
-        # ---- SHOW BOUNDS ONLY IF USEFUL ----
-        if outlier_method == "IQR" and outlier_count > 0:
-            st.caption(f"IQR bounds: [{lower:,.2f}, {upper:,.2f}]")
+    total_rows = len(df)
+    outlier_count = len(outliers)
 
-        # ------------------ PREVIEW + ACTION ------------------
-        if outlier_count > 0:
+    colA, colB = st.columns(2)
+    colA.metric("Total rows", total_rows)
+    colB.metric("Outliers found", outlier_count)
 
-            st.markdown("### 🔍 Preview")
-            st.dataframe(outliers.head(10), use_container_width=True)
+    if outlier_count == 0:
+        st.success("✔ No outliers detected.")
+        st.markdown("---")
 
-            # ---- ACTION INFO ----
+        return
+    st.dataframe(outliers.head(10), use_container_width=True)
+
+    # ------------------ APPLY ------------------
+    if outlier_action != "Do nothing":
+
+        if st.button("Apply Outlier Operation"):
+
+            st.session_state["history"].append(df.copy())
+
+            df_copy = df.copy()
+            df_copy[out_col] = pd.to_numeric(df_copy[out_col], errors="coerce").astype(float)
+
+            before_rows = len(df_copy)
+
+            # ---------- REMOVE ----------
             if outlier_action == "Remove outliers":
-                st.warning(f"{outlier_count} rows will be removed")
+
+                if outlier_method == "IQR":
+                    df_copy = df_copy[
+                        (df_copy[out_col] >= lower) &
+                        (df_copy[out_col] <= upper)
+                    ]
+
+                else:
+                    std = df_copy[out_col].std()
+                    z_scores = (df_copy[out_col] - df_copy[out_col].mean()) / std
+                    df_copy = df_copy[np.abs(z_scores) <= 3]
+
+                removed = before_rows - len(df_copy)
+                affected = removed
+
+                st.write(f"Rows removed: {removed}")
+
+            # ---------- CAP ----------
             elif outlier_action == "Cap (Winsorize)":
-                st.info(f"{outlier_count} values will be capped")
 
-            # ---- APPLY BUTTON ----
-            if outlier_action != "Do nothing":
-                if st.button("Apply Outlier Operation", type="primary", use_container_width=True):
-                    st.session_state["history"].append(df.copy())
+                if outlier_method != "IQR":
+                    st.warning("Capping only works with IQR.")
+                    return
 
-                    df_copy = df.copy()
-                    before_rows = len(df)
+                Q1 = df_copy[out_col].quantile(0.25)
+                Q3 = df_copy[out_col].quantile(0.75)
+                IQR = Q3 - Q1
 
-                    if outlier_action == "Remove outliers":
+                if IQR == 0:
+                    st.warning("No variation. Cannot cap.")
+                    return
 
-                        if outlier_method == "IQR":
-                            df_copy = df_copy[
-                                (df_copy[out_col] >= lower) &
-                                (df_copy[out_col] <= upper)
-                            ]
+                lower = Q1 - 1.5 * IQR
+                upper = Q3 + 1.5 * IQR
 
-                        elif outlier_method == "Z-score":
-                            std = df_copy[out_col].std()
-                            if std != 0:
-                                z_scores = (df_copy[out_col] - df_copy[out_col].mean()) / std
-                                df_copy = df_copy[np.abs(z_scores) <= 3]
+                before_values = df_copy[out_col].copy()
 
-                        removed = before_rows - len(df_copy)
-                        affected = removed
-                        st.write(f"Rows removed: {removed}")
+                df_copy[out_col] = df_copy[out_col].clip(lower, upper)
 
-                    elif outlier_action == "Cap (Winsorize)":
+                affected = (before_values != df_copy[out_col]).sum()
 
-                        if outlier_method == "IQR":
-                            before_values = df_copy[out_col].copy()
-                            df_copy[out_col] = df_copy[out_col].clip(lower, upper)
-                            affected = (before_values != df_copy[out_col]).sum()
-                            st.write(f"Values capped: {affected}")
-                        else:
-                            st.warning("Capping not supported for Z-score")
-                            affected = 0
+                st.write(f"Values capped: {affected}")
+                st.write(f"Bounds: [{lower:.2f}, {upper:.2f}]")
 
-                    add_log(
-                        operation="Outliers",
-                        columns=out_col,
-                        method=outlier_method,
-                        action=outlier_action,
-                        affected=int(affected),
-                        details=f"{before_rows} → {len(df_copy)} rows"
-                    )
+            # ---------- SAVE ----------
+            st.session_state["df"] = df_copy
 
-                    st.session_state["df"] = df_copy
-                    st.success("Changes applied!")
-                    st.rerun()
+            add_log(
+                operation="Outliers",
+                columns=out_col,
+                method=outlier_method,
+                action=outlier_action,
+                affected=int(affected),
+                details=f"{before_rows} → {len(df_copy)} rows"
+            )
 
+            st.success("✔ Changes applied")
+            st.rerun()
+        
     st.markdown("---")

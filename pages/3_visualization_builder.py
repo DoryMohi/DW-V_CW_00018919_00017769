@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import datetime
+from utils import detect_id_columns
 
 st.title("Page C — Visualization Builder")
 
@@ -21,10 +22,16 @@ st.caption(f"{df.shape[0]} rows × {df.shape[1]} columns")
 # =========================
 # DATA TYPES
 # =========================
-numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns.tolist()
+ignore_cols = detect_id_columns(df)
+
+numeric_cols = [
+    col for col in df.select_dtypes(include=["int64", "float64"]).columns
+    if col not in ignore_cols
+]
+
 categorical_cols = [
     col for col in df.select_dtypes(include=["object", "category", "string"]).columns
-    if 2 <= df[col].nunique() <= 10
+    if col not in ignore_cols
 ]
 datetime_cols = df.select_dtypes(include=["datetime64[ns]"]).columns.tolist()
 important_cats = [
@@ -141,6 +148,7 @@ elif chart_type == "Scatter":
         
 
 elif chart_type == "Line":
+    
     st.info("Use 'Date Filter' function on the on the sidebar for improving readability (if needed)")
     if not datetime_cols:
         st.warning("No datetime column available for line chart.")
@@ -358,79 +366,105 @@ if st.button("Generate Chart"):
                 st.warning("No data to plot.")
                 st.stop()
 
-            # ensure datetime
-            data[x_col] = pd.to_datetime(data[x_col])
-
-            palette = ["#2A6F97", "#52B788", "#F4A261", "#8E7DBE", "#E76F51"]
-
             # =========================
-            # WITH GROUPING
+            # SAFE DATETIME CONVERSION
             # =========================
-            if group_col != "None":
-                for i, (cat, subset) in enumerate(filtered_df.groupby(group_col)):
-                    subset = subset[[x_col, y_col]].dropna()
-
-                    if subset.empty:
-                        continue
-
-                    subset[x_col] = pd.to_datetime(subset[x_col])
-
-                    # 🔥 MONTHLY AGGREGATION
-                    subset["month"] = subset[x_col].dt.to_period("M")
-                    subset = subset.groupby("month")[y_col].mean().reset_index()
-
-                    # convert back to timestamp for plotting
-                    subset["month"] = subset["month"].dt.to_timestamp()
-
-                    # 🔥 SMOOTHING
-                    subset[y_col] = subset[y_col].rolling(window=3, min_periods=1).mean()
-
-                    ax.plot(
-                        subset["month"],
-                        subset[y_col],
-                        label=str(cat),
-                        color=palette[i % len(palette)],
-                        linewidth=2.5,
-                        alpha=0.9
-                    )
-
-                ax.legend(title=group_col, bbox_to_anchor=(1.05, 1), loc='upper left')
-
-            # =========================
-            # WITHOUT GROUPING
-            # =========================
-            else:
-                # 🔥 MONTHLY AGGREGATION
-                data["month"] = data[x_col].dt.to_period("M")
-                data = data.groupby("month")[y_col].mean().reset_index()
-
-                data["month"] = data["month"].dt.to_timestamp()
-
-                # 🔥 SMOOTHING
-                data[y_col] = data[y_col].rolling(window=3, min_periods=1).mean()
-
-                ax.plot(
-                    data["month"],
-                    data[y_col],
-                    color="#2A6F97",
-                    linewidth=2.5,
-                    alpha=0.9
+            if data[x_col].dtype in ["int64", "float64"]:
+                # try YYYYMMDD format first
+                data[x_col] = pd.to_datetime(
+                    data[x_col].astype(str),
+                    format="%Y%m%d",
+                    errors="coerce"
                 )
 
-            # =========================
-            # CLEAN AXIS
-            # =========================
-            ax.set_title(f"{y_col} trend over time", fontsize=14)
-            ax.set_xlabel("Time")
-            ax.set_ylabel(y_col)
+                # fallback if failed
+                if data[x_col].isna().mean() > 0.5:
+                    data[x_col] = pd.to_datetime(data[x_col], errors="coerce")
 
-            ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
-            ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+            else:
+                data[x_col] = pd.to_datetime(data[x_col], errors="coerce")
+
+            data = data.dropna(subset=[x_col])
+
+            if data.empty:
+                st.error("Could not parse datetime column.")
+                st.stop()
+
+            # =========================
+            # SORT (VERY IMPORTANT)
+            # =========================
+            data = data.sort_values(by=x_col)
+
+            # =========================
+            # TIME COMPLEXITY LOGIC
+            # =========================
+            month_periods = data[x_col].dt.to_period("M").nunique()
+
+            # Decide behavior
+            if month_periods <= 36:
+                mode = "monthly"
+            elif month_periods <= 60:
+                mode = "monthly_sparse"
+            else:
+                mode = "yearly"
+
+            # =========================
+            # PREPARE DATA
+            # =========================
+            if mode == "yearly":
+                data["time_group"] = data[x_col].dt.year
+                data = data.groupby("time_group")[y_col].mean().reset_index()
+
+            else:
+                data["time_group"] = data[x_col].dt.to_period("M").dt.to_timestamp()
+                data = data.groupby("time_group")[y_col].mean().reset_index()
+
+            # smoothing (light, keeps shape)
+            data[y_col] = data[y_col].rolling(window=3, min_periods=1).mean()
+
+            # =========================
+            # PLOT
+            # =========================
+            ax.plot(
+                data["time_group"],
+                data[y_col],
+                color="#2A6F97",
+                linewidth=2.5,
+                alpha=0.9
+            )
+
+            # =========================
+            # AXIS FORMATTING
+            # =========================
+            if mode in ["monthly", "monthly_sparse"]:
+
+                # dynamic interval
+                if month_periods <= 12:
+                    interval = 1
+                elif month_periods <= 24:
+                    interval = 2
+                elif month_periods <= 36:
+                    interval = 3
+                else:
+                    interval = 6
+
+                ax.xaxis.set_major_locator(mdates.MonthLocator(interval=interval))
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+
+            else:
+                ax.set_xticks(data["time_group"])
+                ax.set_xticklabels(data["time_group"].astype(str))
 
             plt.xticks(rotation=30)
 
-            ax.grid(True, linestyle="--", alpha=0.2)
+            # =========================
+            # STYLE
+            # =========================
+            ax.set_title(f"{y_col} Trend Over Time", fontsize=14, fontweight="semibold")
+            ax.set_xlabel("Time")
+            ax.set_ylabel(y_col)
 
+            ax.grid(True, linestyle="--", alpha=0.2)
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
 
@@ -487,7 +521,10 @@ if st.button("Generate Chart"):
             for i, v in enumerate(grouped.values):
                 ax.text(i, v, f"{int(v)}", ha='center', va='bottom', fontsize=9)
 
-            ax.set_title(f"{agg.capitalize()} of {x_col}")
+            if y_col:
+                ax.set_title(f"{agg.capitalize()} of {y_col} by {x_col}")
+            else:
+                ax.set_title(f"{agg.capitalize()} of {x_col}")
             ax.set_xlabel(x_col)
             ax.set_ylabel(agg)
 
@@ -548,3 +585,35 @@ if st.button("Generate Chart"):
         ax.set_ylabel(y_col)
 
     st.pyplot(fig)
+
+
+# =========================
+# TRANSFORMATION LOG (SIDEBAR)
+# =========================
+st.sidebar.markdown("## 🧾 Transformations")
+
+logs = st.session_state.get("log", [])
+
+if logs:
+    recent_logs = logs[-5:]  # last 5 only
+
+    for entry in reversed(recent_logs):
+        st.sidebar.markdown(f"""
+**{entry.get('operation', '-') }**
+
+• {entry.get('action', '-')}  
+• `{entry.get('columns', '-')}`
+""")
+    
+    with st.sidebar.expander("View full log"):
+        for entry in reversed(logs):
+            st.markdown(f"""
+**{entry.get('operation', '-') }**
+
+- Column: `{entry.get('columns', '-')}`
+- Method: `{entry.get('method', '-')}`
+- Action: `{entry.get('action', '-')}`
+- Details: `{entry.get('details', '-')}`
+""")
+else:
+    st.sidebar.caption("No transformations yet")

@@ -236,20 +236,30 @@ if st.download_button(
         details=f"{df.shape[0]} rows, {df.shape[1]} columns"
     )
 st.markdown("---")
-
-
-
 st.markdown("## Transformation Log")
-col1, col2 = st.columns([1, 3])
+col1, col2 = st.columns([1, 2])
 
 with col1:
-    if st.button("↩️ Undo Last Step"):
+    undo_clicked = st.button("↩️ Undo Last Step")
+
+    if undo_clicked:
         if st.session_state["history"]:
             st.session_state["df"] = st.session_state["history"].pop()
-            st.success("Last action undone")
+
+            if st.session_state["log"]:
+                last = st.session_state["log"].pop()
+                st.session_state["undo_msg"] = f"Reverted: {last.get('operation', 'Last action')}"
+            else:
+                st.session_state["undo_msg"] = "Last action undone"
+
             st.rerun()
         else:
             st.warning("No history to undo")
+
+with col2:
+    if "undo_msg" in st.session_state:
+        st.info(st.session_state["undo_msg"])
+        del st.session_state["undo_msg"]  
 
 logs = st.session_state.get("log", [])
 

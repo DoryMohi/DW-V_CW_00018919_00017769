@@ -91,7 +91,7 @@ Upload your data or connect a source to begin analysis.
 
 
 # ------------------ FUNCTIONS ------------------
-def log_upload(operation, columns, method="-", action="-", affected=None, details=""):
+def add_log(operation, columns, method="-", action="-", affected=None, details=""):
     st.session_state["log"].append({
         "time": pd.Timestamp.now().strftime("%H:%M:%S"),
         "operation": operation,
@@ -131,8 +131,8 @@ def load_file(uploaded_file):
 
         rows, cols = df.shape
 
-        log_upload(
-            operation="Upload (CSV,XLSX,JSON)",
+        add_log(
+            operation="Upload (CSV, XLSX, JSON)",
             columns="All",
             method=uploaded_file.name,
             action="File loaded",
@@ -170,7 +170,7 @@ def load_google_sheet(sheet_url):
 
         rows, cols = df.shape
 
-        log_upload(
+        add_log(
             operation="Upload (Google Sheets)",
             columns="All",
             method="Google Sheets",
@@ -331,17 +331,6 @@ else:
     # -------- LOG --------
 st.markdown("## Transformation Log")
 
-logs = st.session_state.get("log", [])
-col1, col2 = st.columns([1, 3])
-
-with col1:
-    if st.button("↩️ Undo Last Step"):
-        if st.session_state["history"]:
-            st.session_state["df"] = st.session_state["history"].pop()
-            st.success("Last action undone")
-            st.rerun()
-        else:
-            st.warning("No history to undo")
 
 logs = st.session_state.get("log", [])
 if logs:
@@ -379,6 +368,9 @@ else:
 
 # ------------------ RESET ------------------
 if st.button("Reset Session", type="primary"):
-    st.session_state.clear()
+    for key in ["df", "log", "history", "original_df"]:
+        if key in st.session_state:
+            del st.session_state[key]
+
     st.session_state["uploader_key"] = 0
     st.rerun()

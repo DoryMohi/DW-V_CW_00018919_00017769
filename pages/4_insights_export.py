@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import io
 import json
 from datetime import datetime
+from utils import detect_id_columns
 
 st.set_page_config(page_title="Insights & Export", layout="wide")
 
@@ -44,6 +45,8 @@ st.subheader("🧪 Data Quality Insights")
 
 missing = df.isnull().sum().sum()
 duplicates = df.duplicated().sum()
+ignore_cols = detect_id_columns(df)
+
 
 if missing > 0:
     st.warning(f"{missing} missing values detected")
@@ -60,7 +63,10 @@ else:
 # =========================
 st.subheader("📂 Column Analysis")
 
-numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
+numeric_cols = [
+    col for col in df.select_dtypes(include=['int64', 'float64']).columns
+    if col not in ignore_cols
+]
 categorical_cols = df.select_dtypes(include=['object', 'category', 'string']).columns.tolist()
 
 colA, colB = st.columns(2)
@@ -93,7 +99,14 @@ if numeric_cols:
 
         st.write(f"Min: {data.min()} | Max: {data.max()}")
 
-        variability = "high variability" if data.std() > data.mean() * 0.5 else "moderate variability"
+        cv = data.std() / (data.mean() + 1e-9)
+
+        if cv > 0.5:
+            variability = "high variability"
+        elif cv > 0.2:
+            variability = "moderate variability"
+        else:
+            variability = "low variability"
 
         st.info(
             f"The average **{selected_num}** is **{round(data.mean(),2)}**. "
@@ -115,10 +128,15 @@ if categorical_cols:
     else:
         top = value_counts.head(10)
 
+        total = value_counts.sum()
+        top_pct = (top.iloc[0] / total) * 100       
+
         st.dataframe(top)
 
         st.info(
-            f"'{top.index[0]}' is the most frequent category with {top.iloc[0]} occurrences."
+            f"'{top.index[0]}' dominates with {top.iloc[0]} occurrences "
+            f"({top_pct:.1f}% of data), indicating "
+            f"{'imbalance' if top_pct > 60 else 'fair distribution'}."
         )
 
 # =========================
@@ -195,10 +213,19 @@ if len(numeric_cols) >= 2:
             top_pair = strong_corr.index[0]
             top_value = strong_corr.iloc[0]
 
+            if abs(top_value) < 0.1:
+                strength = "no meaningful correlation"
+            elif abs(top_value) < 0.5:
+                strength = "weak correlation"
+            else:
+                strength = "strong correlation"
+
             st.info(
-                f"Strongest relationship: **{top_pair[0]} vs {top_pair[1]}** "
+                f"{strength.capitalize()} detected between **{top_pair[0]}** and **{top_pair[1]}** "
                 f"(correlation = {round(top_value,2)})."
             )
+        else:
+            st.info("No significant relationships found.")
 
     else:
         st.warning("Select at least 2 columns")
@@ -211,9 +238,6 @@ st.subheader("👀 Data Preview")
 rows = st.slider("Rows to preview", 5, 50, 10)
 st.dataframe(df.head(rows))
 
-# =========================
-# EXPORT SECTION
-# =========================
 # =========================
 # EXPORT SECTION
 # =========================
