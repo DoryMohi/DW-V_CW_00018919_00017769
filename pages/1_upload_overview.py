@@ -257,8 +257,12 @@ else:
 
     # -------- PREVIEW --------
     st.markdown('<div class="section-title"> Data Preview</div>', unsafe_allow_html=True)
-    st.dataframe(df.head(10), use_container_width=True)
+    preview_df = df.dropna(how="all")
 
+    if preview_df.empty:
+        st.warning("Dataset is empty.")
+    else:
+        st.dataframe(preview_df.sample(min(10, len(preview_df))), use_container_width=True)
     # -------- ACTIONS --------
     colA, colB = st.columns([1, 3])
 

@@ -18,28 +18,55 @@ def missing_section(df, add_log):
 
     # ✅ FILTER ONLY columns with missing values
     missing_df = missing_df[missing_df["Missing Count"] > 0]
+    missing_df = missing_df.sort_values(by="Missing Count", ascending=False)
+
     if missing_df.empty:
         st.success("✔ Dataset is clean. No missing values found.")
     else:
         st.dataframe(missing_df, use_container_width=True)
 
     # ✅ SORT (optional but nice)
-    missing_df = missing_df.sort_values(by="Missing Count", ascending=False)
     total_missing = missing.sum()
 
     st.metric("Total Missing Values", total_missing)
-    # ------------------ DROP BY THRESHOLD ------------------
+# ------------------ DROP BY THRESHOLD ------------------
     st.markdown("### 🚫 Drop Columns by Missing %")
 
-    threshold = st.slider(
-        "Missing value threshold (%)",
-        min_value=0.0,
-        max_value=15.0,
-        value=0.1,
-        step=0.01,
-        help="Columns with missing percentage above this value will be removed"
-    )
+    # init
+    if "threshold" not in st.session_state:
+        st.session_state.threshold = 5.0
 
+    def update_from_input():
+        st.session_state.threshold = st.session_state.input_val
+        st.session_state.slider_val = st.session_state.input_val
+        st.rerun()
+
+
+    def update_from_slider():
+        st.session_state.threshold = st.session_state.slider_val
+        st.session_state.input_val = st.session_state.slider_val
+
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+        st.slider(
+            "Missing value threshold (%)",
+            0.0, 100.0,
+            step=0.1,
+            key="slider_val",
+            on_change=update_from_slider
+        )
+
+    with col2:
+        st.number_input(
+            "Value",
+            0.0, 100.0,
+            step=0.1,
+            key="input_val",
+            on_change=update_from_input
+        )
+
+    threshold = st.session_state.threshold
     percent = (df.isnull().sum() / len(df)) * 100
     cols_to_drop = percent[percent > threshold].index.tolist()
 
@@ -53,11 +80,9 @@ def missing_section(df, add_log):
         st.info("No columns exceed the selected threshold.")
 
     # APPLY
-    if st.button("🗑️ Apply Column Drop", type="primary"):
+    disable_button = len(cols_to_drop) == 0
 
-        if not cols_to_drop:
-            st.info("No columns exceed the selected threshold.")
-        else:
+    if st.button("🗑️ Apply Column Drop", type="primary", disabled=disable_button):
             st.session_state["history"].append(df.copy())
             df_copy = df.copy()
             before_cols = len(df.columns)
@@ -87,140 +112,201 @@ def missing_section(df, add_log):
     st.markdown("---")
 
 
-    # ------------------ HANDLE MISSING ------------------
+ # ------------------ HANDLE MISSING ------------------
     st.markdown("### ⚙️ Handle Missing Values")
 
-    col1, col2 = st.columns(2)
+    # get only columns with missing values
+    missing_columns = df.columns[df.isnull().sum() > 0].tolist()
 
-    with col1:
-        missing_col = st.selectbox("Column", df.columns)
-
-    is_numeric = pd.api.types.is_numeric_dtype(df[missing_col])
-
-    if is_numeric:
-        actions = [
-            "Drop rows",
-            "Fill with mean",
-            "Fill with median",
-            "Fill with mode",
-            "Fill with constant",
-            "Forward fill",
-            "Backward fill"
-        ]
+    # 🚫 EARLY EXIT (IMPORTANT)
+    if not missing_columns:
+        st.success("✔ No columns have missing values. Nothing to handle.")
     else:
-        actions = [
-            "Drop rows",
-            "Fill with most frequent",
-            "Fill with constant",
-            "Forward fill",
-            "Backward fill"
-        ]
+        col1, col2 = st.columns(2)
 
-    with col2:
-        missing_action = st.selectbox("Action", actions)
+        # ------------------ COLUMN SELECT ------------------
+        with col1:
+            missing_col = st.selectbox("Column", missing_columns)
 
-    value = None
-    if missing_action == "Fill with constant":
-        value = st.text_input("Enter value")
+            # ✅ reset preview when column changes
+            if "last_column" not in st.session_state:
+                st.session_state["last_column"] = missing_col
 
-    # APPLY
-    if st.button("Apply Changes", type="secondary"):
+            if st.session_state["last_column"] != missing_col:
+                st.session_state["preview_ready"] = False
+                st.session_state["last_column"] = missing_col
 
-        before_missing = df[missing_col].isnull().sum()
-        before_rows = len(df)
+            missing_count = df[missing_col].isnull().sum()
+            missing_percent = (missing_count / len(df)) * 100
 
-        no_missing = before_missing == 0
+            st.caption(f"Missing: {missing_count} ({missing_percent:.2f}%)")
 
-        if no_missing:
-            st.info(f"No missing values in '{missing_col}'. Nothing to clean.")
-
+            is_numeric = pd.api.types.is_numeric_dtype(df[missing_col])
+        if is_numeric:
+            actions = [
+                "Drop rows",
+                "Fill with mean",
+                "Fill with median",
+                "Fill with mode",
+                "Fill with constant",
+                "Forward fill",
+                "Backward fill"
+            ]
         else:
-            st.session_state["history"].append(df.copy())
-            try:
-                df_copy = df.copy()
+            actions = [
+                "Drop rows",
+                "Fill with most frequent",
+                "Fill with constant",
+                "Forward fill",
+                "Backward fill"
+            ]
+        with col2:
+            missing_action = st.selectbox("Action", actions, key="missing_action")
 
-                if missing_action == "Drop rows":
-                    df_copy = df_copy.dropna(subset=[missing_col])
+            # ✅ reset preview when action changes
+            if "last_action" not in st.session_state:
+                st.session_state["last_action"] = missing_action
 
-                elif missing_action == "Fill with mean":
-                    df_copy[missing_col] = df_copy[missing_col].fillna(df_copy[missing_col].mean())
+            if st.session_state["last_action"] != missing_action:
+                st.session_state["preview_ready"] = False
+                st.session_state["last_action"] = missing_action
 
+            value = None
+            if missing_action == "Fill with constant":
+                value = st.text_input("Enter value")
+
+            disable_apply = missing_count == 0
+
+            # ✅ Show info only BEFORE apply
+            if not st.session_state.get("preview_ready", False):
+                if missing_action == "Fill with mean":
+                    st.info("Missing values will be replaced with mean")
                 elif missing_action == "Fill with median":
-                    df_copy[missing_col] = df_copy[missing_col].fillna(df_copy[missing_col].median())
-
+                    st.info("Missing values will be replaced with median")
                 elif missing_action in ["Fill with mode", "Fill with most frequent"]:
-                    mode_series = df_copy[missing_col].mode()
+                    st.info("Missing values will be replaced with the most frequent value")
+                elif missing_action == "Forward fill":
+                    st.info("Missing values will be filled using previous row values")
+                elif missing_action == "Backward fill":
+                    st.info("Missing values will be filled using next row values")
+                elif missing_action == "Drop rows":
+                    st.warning("Rows with missing values will be removed permanently")            
+                    
+                    
+                    # ------------------ APPLY ------------------
+            if st.button("Apply Changes", disabled=disable_apply):
+                before_missing = df[missing_col].isnull().sum()
+                before_rows = len(df)
 
-                    if not mode_series.empty:
-                        df_copy[missing_col] = df_copy[missing_col].fillna(mode_series[0])
-                    else:
-                        st.warning("No mode found.")
-                elif missing_action == "Fill with constant":
-                    if value is None or value == "":
-                        st.warning("Please enter a value.")
-                    df_copy[missing_col] = df_copy[missing_col].replace(
+                st.session_state["history"].append(df.copy())
+
+                try:
+                    df_copy = df.copy()
+
+                    # ===== APPLY LOGIC =====
+                    if missing_action == "Drop rows":
+                        df_copy = df_copy.dropna(subset=[missing_col])
+
+                    elif missing_action == "Fill with mean":
+                        mean_val = df_copy[missing_col].mean()
+                        if pd.api.types.is_integer_dtype(df_copy[missing_col]):
+                            mean_val = int(round(mean_val))
+                        df_copy[missing_col] = df_copy[missing_col].fillna(mean_val)
+
+                    elif missing_action == "Fill with median":
+                        median_val = df_copy[missing_col].median()
+                        if pd.api.types.is_integer_dtype(df_copy[missing_col]):
+                            median_val = int(round(median_val))
+                        df_copy[missing_col] = df_copy[missing_col].fillna(median_val)
+
+                    elif missing_action in ["Fill with mode", "Fill with most frequent"]:
+                        mode_series = df_copy[missing_col].mode()
+                        if not mode_series.empty:
+                            df_copy[missing_col] = df_copy[missing_col].fillna(mode_series[0])
+
+                    elif missing_action == "Fill with constant":
+                        if value is None or value == "":
+                            st.warning("Please enter a value.")
+                            st.stop()
+
+                        df_copy[missing_col] = df_copy[missing_col].replace(
                             ["", " ", "NA", "None"], np.nan
                         )
-                    if is_numeric:
-                        try:
-                            value = float(value)
-                        except:
-                            st.error("Enter a valid number.")
 
-                    df_copy[missing_col] = df_copy[missing_col].fillna(value)
-                elif missing_action == "Forward fill":
-                    df_copy[missing_col] = df_copy[missing_col].ffill()
+                        if is_numeric:
+                            try:
+                                value = float(value)
+                            except:
+                                st.error("Enter a valid number.")
+                                st.stop()
 
-                elif missing_action == "Backward fill":
-                    df_copy[missing_col] = df_copy[missing_col].bfill()
+                        df_copy[missing_col] = df_copy[missing_col].fillna(value)
 
-                # AFTER PREVIEW
-                after_missing = df_copy[missing_col].isnull().sum()
-                after_rows = len(df_copy)
+                    elif missing_action == "Forward fill":
+                        df_copy[missing_col] = df_copy[missing_col].ffill()
 
-                st.session_state["df"] = df_copy
-                st.session_state["preview"] = {
-                            "before_missing": before_missing,
-                            "after_missing": after_missing,
-                            "before_rows": before_rows,
-                            "after_rows": after_rows,
-                            "column": missing_col
-                        }
-                if "log" in st.session_state:
-                    filled = before_missing - after_missing
-                    add_log(
-                        operation="Missing Values",
-                        columns=missing_col,
-                        method=missing_action,
-                        action="Handled missing",
-                        affected=filled,
-                        details=f"{before_missing} → {after_missing}"
-                    )
+                    elif missing_action == "Backward fill":
+                        df_copy[missing_col] = df_copy[missing_col].bfill()
 
-                st.success("✔ Operation applied")
+                    # ===== SAVE =====
+                    after_missing = df_copy[missing_col].isnull().sum()
+                    after_rows = len(df_copy)
 
-            except Exception as e:
-                st.error(f"Error: {e}")
+                    st.session_state["df"] = df_copy
+                    st.session_state["preview"] = {
+                        "column": missing_col,
+                        "action": missing_action,
+                        "before_missing": before_missing,
+                        "after_missing": after_missing,
+                        "before_rows": before_rows,
+                        "after_rows": after_rows
+                    }
 
-        if "preview" in st.session_state and not no_missing:
+                    st.session_state["preview_ready"] = True
+
+                    st.success("✔ Operation applied")
+
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+        # ------------------ PREVIEW ------------------
+        if (
+            st.session_state.get("preview_ready")
+            and "history" in st.session_state
+            and len(st.session_state["history"]) > 0
+            and "preview" in st.session_state
+        ):
             p = st.session_state["preview"]
-            st.markdown("### 📊 Before vs After")
-            st.markdown(f"**Column affected:** {p['column']}")
+            prev_df = st.session_state["history"][-1]
 
-            col_b, col_a = st.columns(2)
+            if p["column"] in prev_df.columns:
+                mask = prev_df[p["column"]].isnull()
 
-            with col_b:
-                st.markdown("**Before**")
-                st.write(f"Missing: {p['before_missing']}")
-                st.write(f"Rows: {p['before_rows']}")
+                before_df = prev_df.loc[mask, [p["column"]]]
+                after_df = st.session_state["df"].loc[mask, [p["column"]]]
 
-            with col_a:
-                st.markdown("**After**")
-                st.write(f"Missing: {p['after_missing']}")
-                st.write(f"Rows: {p['after_rows']}")
+                st.markdown("### 🔍 Data Preview")
 
-    st.markdown("---")
+                col_b, col_a = st.columns(2)
 
+                with col_b:
+                    st.markdown("**Before (affected rows)**")
+                    if before_df.empty:
+                        st.info("No affected rows.")
+                    else:
+                        st.dataframe(before_df.head(10))
+
+                with col_a:
+                    st.markdown("**After (affected rows)**")
+                    if after_df.empty:
+                        if p.get("action") == "Drop rows":
+                            st.info("Rows with missing values were removed.")
+                        else:
+                            st.info("No affected rows.")
+                    else:
+                        st.dataframe(after_df.head(10))
+
+st.markdown("---")
 def duplicates_section(df, add_log):
     st.markdown("## 🔁 Duplicates")
 
@@ -230,11 +316,25 @@ def duplicates_section(df, add_log):
         index=0
     )
 
+    if "last_dup_type" not in st.session_state:
+        st.session_state["last_dup_type"] = dup_type
+
+    if st.session_state["last_dup_type"] != dup_type:
+        st.session_state["dup_applied"] = False
+        st.session_state["last_dup_type"] = dup_type
+
     subset_cols = []
 
     # ---- LOGIC ----
     if dup_type == "Subset duplicates":
         subset_cols = st.multiselect("Select columns", df.columns)
+
+        if "last_subset" not in st.session_state:
+            st.session_state["last_subset"] = subset_cols
+
+        if st.session_state["last_subset"] != subset_cols:
+            st.session_state["dup_applied"] = False
+            st.session_state["last_subset"] = subset_cols
 
         if not subset_cols:
             st.warning("Select at least one column to detect duplicates.")
@@ -248,7 +348,12 @@ def duplicates_section(df, add_log):
         duplicates = duplicates.sort_values(by=df.columns.tolist())
 
     # ---- SHOW DUPLICATES ----
-    st.write(f"Duplicates found: {len(duplicates)}")
+    dup_groups = duplicates.drop_duplicates(
+        subset=subset_cols if len(subset_cols) > 0 else None
+    )
+
+    st.write(f"Duplicate rows: {len(duplicates)}")
+    st.write(f"Duplicate groups: {len(dup_groups)}")
 
     if not duplicates.empty:
         st.dataframe(duplicates, width="stretch")
@@ -260,18 +365,14 @@ def duplicates_section(df, add_log):
 
     # ---- ACTION ----
     if duplicates.empty:
-        dup_action = st.selectbox(
-            "Action",
-            ["Do nothing"],
-            disabled=True
-        )
+        st.session_state["dup_applied"] = False
     else:
         dup_action = st.selectbox(
             "Action",
             ["Do nothing", "Remove duplicates (keep first)", "Remove duplicates (keep last)"]
         )
-
     # ---- APPLY ----
+    
         disabled = duplicates.empty or dup_action == "Do nothing"
 
         if st.button("Apply Duplicate Operation", disabled=disabled):
@@ -330,27 +431,27 @@ def duplicates_section(df, add_log):
     if (
         "dup_preview" in st.session_state
         and st.session_state.get("dup_applied")
+        and st.session_state["dup_preview"]["removed"] > 0
     ):
         p = st.session_state["dup_preview"]
 
         # Only show result if something actually changed
-        if p["removed"] > 0:
-            st.markdown("### 🔍 Result")
-            st.caption("Last operation result")
-            st.markdown(f"**Type:** {p['type']}")
+        st.markdown("### 🔍 Result")
+        st.caption("Last operation result")
+        st.markdown(f"**Type:** {p['type']}")
 
-            col_b, col_a = st.columns(2)
+        col_b, col_a = st.columns(2)
 
-            with col_b:
-                st.markdown("**Before**")
-                st.write(f"Rows: {p['before_rows']}")
+        with col_b:
+            st.markdown("**Before**")
+            st.write(f"Rows: {p['before_rows']}")
 
-            with col_a:
-                st.markdown("**After**")
-                st.write(f"Rows: {p['after_rows']}")
+        with col_a:
+            st.markdown("**After**")
+            st.write(f"Rows: {p['after_rows']}")
 
-            percent = (p['removed'] / p['before_rows']) * 100
-            st.write(f"Removed: {p['removed']} rows ({percent:.2f}%)")
+        percent = (p['removed'] / p['before_rows']) * 100
+        st.write(f"Removed: {p['removed']} rows ({percent:.2f}%)")
 
     st.markdown("---")
 
@@ -362,15 +463,21 @@ def types_section(df, add_log):
     # -------- SELECT COLUMN --------
     type_col = st.selectbox("Select column to convert", df.columns, key="type_col")
 
-    sample_values = df[type_col].dropna().astype(str).head(20)
-    current_type = df[type_col].dtype
+    # Clean sample for detection
+    sample_values = (
+        df[type_col]
+        .replace(["None", "none", "NA", "N/A", "", " "], pd.NA)
+        .dropna()
+        .astype(str)
+        .head(20)
+    )
 
+    current_type = df[type_col].dtype
 
     # -------- DETECTION FUNCTIONS --------
     def looks_like_datetime(values):
         converted = pd.to_datetime(values, errors="coerce", format="mixed")
         return converted.notna().mean() > 0.7
-
 
     def looks_like_numeric(values):
         try:
@@ -378,7 +485,6 @@ def types_section(df, add_log):
             return True
         except:
             return False
-
 
     # -------- SMART OPTIONS --------
     if looks_like_numeric(sample_values):
@@ -390,13 +496,11 @@ def types_section(df, add_log):
     else:
         options = ["Categorical"]
 
-
     target_type = st.selectbox("Convert to", options, key="target_type")
 
-
-    # -------- EXTRA OPTIONS --------
-    date_format = None
+    # -------- OPTIONS --------
     parse_mode = None
+    date_format = None
     clean_numeric = False
 
     if target_type == "Datetime":
@@ -406,18 +510,31 @@ def types_section(df, add_log):
         )
 
         if parse_mode == "Specify format":
-            date_format = st.text_input("Enter datetime format (e.g. %Y-%m-%d)")
+            date_formats = {
+                "YYYY-MM-DD (2024-03-27)": "%Y-%m-%d",
+                "DD-MM-YYYY (27-03-2024)": "%d-%m-%Y",
+                "MM-DD-YYYY (03-27-2024)": "%m-%d-%Y",
+                "DD/MM/YYYY (27/03/2024)": "%d/%m/%Y",
+                "MM/DD/YYYY (03/27/2024)": "%m/%d/%Y",
+                "27 Mar 2024": "%d %b %Y"
+            }
 
+            selected_label = st.selectbox(
+                "Select datetime format",
+                list(date_formats.keys())
+            )
+            date_format = date_formats[selected_label]
+
+    if str(current_type).startswith("datetime") and target_type == "Numeric":
+        st.error("Cannot convert datetime to numeric.")
 
     if target_type == "Numeric":
         clean_numeric = st.checkbox("Clean dirty values (remove $, commas)")
 
-
     # -------- CURRENT TYPE --------
     st.markdown(f"**Current type:** `{current_type}`")
 
-
-    # -------- APPLY BUTTON LOGIC --------
+    # -------- DISABLE LOGIC --------
     disabled = False
 
     if target_type == "Datetime" and str(current_type).startswith("datetime"):
@@ -426,12 +543,19 @@ def types_section(df, add_log):
     if target_type == "Numeric" and ("int" in str(current_type) or "float" in str(current_type)):
         disabled = True
 
-
     # -------- APPLY --------
     if st.button("Apply Type Conversion", disabled=disabled):
+
         st.session_state["history"].append(df.copy())
 
         df_copy = df.copy()
+
+        # ✅ CLEAN FIRST (IMPORTANT FIX)
+        df_copy[type_col] = df_copy[type_col].replace(
+            ["None", "none", "NA", "N/A", "", " "],
+            pd.NA
+        )
+
         before_type = df[type_col].dtype
         before_na = df[type_col].isna().sum()
 
@@ -457,17 +581,39 @@ def types_section(df, add_log):
             elif target_type == "Datetime":
 
                 if parse_mode == "Specify format" and date_format:
-                    df_copy[type_col] = pd.to_datetime(
+                    parsed = pd.to_datetime(
                         df_copy[type_col],
                         format=date_format,
-                        errors="coerce"
+                        errors="coerce",
+                        exact=False
                     )
+                    if parsed.notna().mean() < 0.5:
+                        parsed = pd.to_datetime(
+                            df_copy[type_col],
+                            errors="coerce",
+                            format="mixed"
+                        )
+
                 else:
-                    df_copy[type_col] = pd.to_datetime(
+                    parsed = pd.to_datetime(
                         df_copy[type_col],
                         errors="coerce",
                         format="mixed"
                     )
+
+                # ❗ IMPORTANT: only apply if parsing worked
+                success_ratio = parsed.notna().mean()
+
+                if success_ratio > 0.5:
+                    df_copy[type_col] = parsed
+                    if parse_mode == "Specify format" and date_format:
+                        df_copy[type_col] = df_copy[type_col].dt.strftime(date_format)
+                
+                else:
+                    st.error("Could not parse this column reliably.")
+
+                    # Optional formatting
+            
 
             after_type = df_copy[type_col].dtype
             after_na = df_copy[type_col].isna().sum()
@@ -476,15 +622,14 @@ def types_section(df, add_log):
             st.session_state["df"] = df_copy
 
             # -------- LOG --------
-            if "log" in st.session_state:
-                add_log(
-                    operation="Type Conversion",
-                    columns=type_col,
-                    method=target_type,   # ✅ correct
-                    action="Converted",
-                    affected=len(df_copy),
-                    details=f"{before_type} → {after_type}, NaN: {before_na} → {after_na}"
-                )
+            add_log(
+                operation="Type Conversion",
+                columns=type_col,
+                method=target_type,
+                action="Converted",
+                affected=len(df_copy),
+                details=f"{before_type} → {after_type}, NaN: {before_na} → {after_na}"
+            )
 
             # -------- SUCCESS --------
             st.success("✔ Type conversion applied")
@@ -510,19 +655,10 @@ def types_section(df, add_log):
             if failed > 0:
                 st.warning(f"{failed} values could not be parsed and became NaN/NaT")
 
-            add_log(
-                operation="Type Conversion",
-                columns=type_col,
-                method=target_type,
-                action="Converted",
-                affected=len(df_copy),
-                details=f"{before_type} → {after_type}"
-            )
             st.rerun()
 
         except Exception as e:
             st.error(f"Error: {e}")
-
 
     st.markdown("---")
 def categorical_section(df, add_log):
@@ -543,7 +679,7 @@ def categorical_section(df, add_log):
 
         std_option = st.selectbox(
             "Choose standardization",
-            ["Trim whitespace", "Lowercase", "Title case"],
+            ["Trim whitespace", "Lowercase", "Title case", "UPPERCASE"],
             key="std_option"
         )
 
@@ -552,6 +688,9 @@ def categorical_section(df, add_log):
 
             df_copy = df.copy()
 
+            before_values = df_copy[std_col].astype(str)
+
+            # APPLY
             if std_option == "Trim whitespace":
                 df_copy[std_col] = df_copy[std_col].astype(str).str.strip()
 
@@ -561,11 +700,46 @@ def categorical_section(df, add_log):
             elif std_option == "Title case":
                 df_copy[std_col] = df_copy[std_col].astype(str).str.title()
 
+            elif std_option == "UPPERCASE":
+                df_copy[std_col] = df_copy[std_col].astype(str).str.upper()
+            after_values = df_copy[std_col].astype(str)
+
+            changed = (before_values != after_values).sum()
+
+            # SAVE DATA
             st.session_state["df"] = df_copy
 
-            st.success("✔ Standardization applied")
-            st.rerun()
+            # ✅ SAVE RESULT (THIS WAS MISSING)
+            st.session_state["std_result"] = {
+                "before": before_values.head(5),
+                "after": after_values.head(5),
+                "changed": int(changed),
+                "applied": True
+            }
 
+            # ✅ FEEDBACK
+        if st.session_state.get("std_result", {}).get("applied"):
+
+            r = st.session_state["std_result"]
+
+            if r["changed"] == 0:
+                st.info("No values were changed.")
+            else:
+                st.success("✔ Standardization applied")
+
+                st.markdown("### 🔍 Result")
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown("**Before**")
+                    st.dataframe(r["before"], use_container_width=True)
+
+                with col2:
+                    st.markdown("**After**")
+                    st.dataframe(r["after"], use_container_width=True)
+
+                st.write(f"Changed values: {r['changed']}")
         st.markdown("---")
 
         # =========================================================
@@ -630,69 +804,124 @@ def categorical_section(df, add_log):
 
         st.markdown("---")
 
-# =====================================================
-# 📉 RARE GROUPING & 🧠 ONE-HOT ENCODING
-# =====================================================
+    # =====================================================
+    # 📉 RARE GROUPING & 🧠 ONE-HOT ENCODING
+    # =====================================================
 
-        st.markdown("## 📉 Rare Grouping & 🧠 One-hot Encoding")
+    st.markdown("## 📉 Rare Grouping & One-hot Encoding")
 
-        # ✅ Always use session_state as source of truth
-        df = st.session_state["df"]
+    df = st.session_state["df"]
 
-        cat_cols = [
-            col for col in df.select_dtypes(include=["object", "category", "string"]).columns
-            if df[col].nunique() <= 30
-        ]
+    cat_cols = [
+        col for col in df.select_dtypes(include=["object", "category", "string"]).columns
+        if df[col].nunique() <= 30
+    ]
 
-        if not cat_cols:
-            st.info("No categorical columns available.")
-        else:
-            col = st.selectbox("Select categorical column", cat_cols, key="rg_col")
+    if not cat_cols:
+        st.info("No categorical columns available.")
 
-            n_unique = df[col].nunique()
+    else:
+        col = st.selectbox("Select categorical column", cat_cols, key="rg_col")
 
-            if n_unique > 30:
-                st.warning(f"{n_unique} categories → encoding may create too many columns")
-            elif n_unique <= 10:
-                st.success(f"Good choice ({n_unique} categories)")
+        # 🔥 CLEAR RESULT WHEN COLUMN CHANGES
+        if "last_rg_col" not in st.session_state:
+            st.session_state["last_rg_col"] = col
+
+        if st.session_state["last_rg_col"] != col:
+            st.session_state.pop("ohe_result", None)
+            st.session_state["last_rg_col"] = col
+
+        n_unique = df[col].nunique()
+
+        if n_unique > 30:
+            st.warning(f"{n_unique} categories → encoding may create too many columns")
+        elif n_unique <= 10:
+            st.success(f"Good choice ({n_unique} categories)")
+
         # ------------------ RARE GROUPING ------------------
 
-            st.markdown("### 📉 Handle Rare Categories")
+        st.markdown("### 📉 Handle Rare Categories")
 
-            apply_grouping = st.checkbox("Group rare values into 'Other'", key="rg_check")
+        apply_grouping = st.checkbox("Group rare values into 'Other'", key="rg_check")
 
-            threshold = 1.0
+        if apply_grouping:
 
-            if apply_grouping:
-                threshold = st.slider(
+            # INIT
+            if "rg_threshold" not in st.session_state:
+                st.session_state.rg_threshold = 1.0
+                st.session_state.rg_slider = 1.0
+                st.session_state.rg_input = 1.0
+
+            def update_rg_from_input():
+                st.session_state.rg_threshold = st.session_state.rg_input
+                st.session_state.rg_slider = st.session_state.rg_input
+                st.rerun()
+
+            def update_rg_from_slider():
+                st.session_state.rg_threshold = st.session_state.rg_slider
+                st.session_state.rg_input = st.session_state.rg_slider
+
+            col1, col2 = st.columns([3, 1])
+
+            with col1:
+                st.slider(
                     "Minimum frequency (%) to keep a category",
-                    0.0, 70.0, 1.0,
-                    key="rg_slider"
+                    0.0, 70.0,
+                    step=0.1,
+                    key="rg_slider",
+                    on_change=update_rg_from_slider
                 )
 
-                st.caption(
-                    "Categories appearing less than this percentage will be grouped into 'Other'. "
-                    "Example: 1% means values appearing in less than 1% of rows will be replaced."
+            with col2:
+                st.number_input(
+                    "Value",
+                    0.0, 70.0,
+                    step=0.1,
+                    key="rg_input",
+                    on_change=update_rg_from_input
                 )
 
-                # 📊 Distribution
-                freq = df[col].value_counts(normalize=True) * 100
-                freq = freq.sort_values()
+            threshold = st.session_state.rg_threshold
 
-                st.write("📊 Category distribution (%):")
-                st.dataframe(freq.round(2), use_container_width=True)
+            # 👇 EXPLANATION
+            st.caption(
+                "Categories appearing in less than this percentage will be grouped into 'Other'."
+            )
 
-                # 📊 Impact preview
-                rare_count = (freq < threshold).sum()
-                rare_percent = freq[freq < threshold].sum()
+                        # 📊 ORIGINAL DISTRIBUTION
+            counts = df[col].value_counts()
+            freq = (counts / len(df)) * 100
 
-                if rare_count == 0:
-                    st.info("No categories fall below this threshold.")
-                else:
-                    st.info(
-                        f"{rare_count} categories ({rare_percent:.2f}% of data) "
-                        f"will be grouped into 'Other'"
-                    )
+            # 🎯 CREATE DYNAMIC GROUPING
+            grouped_labels = freq.index.to_series().apply(
+                lambda x: "Other" if freq[x] < threshold else x
+            )
+
+            # 🧠 BUILD FINAL TABLE
+            final_df = pd.DataFrame({
+                "Category": freq.index,
+                "Percentage (%)": freq.values.round(2),
+                "Count": counts.values,
+                "After Grouping": grouped_labels.values
+            })
+
+            # optional: sort nicely
+            final_df = final_df.sort_values(by="Percentage (%)", ascending=False)
+
+            # 🎨 DISPLAY
+            st.markdown("### 📊 Category Distribution & Grouping")
+            st.dataframe(final_df, use_container_width=True)
+
+            # 📢 INFO MESSAGE
+            rare_count = (freq < threshold).sum()
+            rare_percent = freq[freq < threshold].sum()
+
+            if rare_count == 0:
+                st.info("No categories fall below this threshold.")
+            else:
+                st.info(
+                    f"{rare_count} categories ({rare_percent:.2f}% of data) will be grouped into 'Other'"
+        )
         # ------------------ ONE-HOT ENCODING ------------------
 
         st.markdown("### 🧠 Convert to Machine-Friendly Format")
@@ -702,11 +931,13 @@ def categorical_section(df, add_log):
             disabled=(n_unique > 30),
             key="ohe_check"
         )
+
         if n_unique > 30:
             st.warning(
                 f"One-hot encoding disabled: '{col}' has {n_unique} unique values. "
                 "Use rare grouping first."
             )
+
         replace_original = st.checkbox(
             "Replace original column after encoding",
             value=True,
@@ -716,39 +947,29 @@ def categorical_section(df, add_log):
         # ------------------ APPLY ------------------
 
         if st.button("Apply Changes", key="rg_ohe_btn"):
+
+            # 🔥 CLEAR OLD RESULT
+            st.session_state.pop("ohe_result", None)
+
             st.session_state["history"].append(df.copy())
 
             df_copy = df.copy()
 
             before_cols = df_copy.shape[1]
-            before_unique = df_copy[col].nunique() if col in df_copy.columns else "encoded"
 
-            # ---------- STEP 1: GROUPING ----------
+            # ---------- GROUPING ----------
             if apply_grouping:
                 freq = df_copy[col].value_counts(normalize=True) * 100
                 rare_values = freq[freq < threshold]
-
-                rare_category_count = len(rare_values)
-                affected_rows_percent = rare_values.sum()
-
-                if rare_category_count == 0:
-                    st.info("No categories fall below this threshold.")
-                else:
-                    st.info(
-                        f"{rare_category_count} categories will be grouped into 'Other' "
-                        f"(affects {affected_rows_percent:.2f}% of rows)"
-                    )
 
                 df_copy[col] = df_copy[col].apply(
                     lambda x: "Other" if x in rare_values else x
                 )
 
-            # ---------- STEP 2: ENCODING ----------
+            # ---------- ENCODING ----------
             new_columns = []
 
             if apply_ohe:
-
-                # 🔥 remove old encoded columns (prevents duplicates)
                 existing_cols = [c for c in df_copy.columns if c.startswith(f"{col}_")]
                 df_copy = df_copy.drop(columns=existing_cols, errors="ignore")
 
@@ -763,29 +984,18 @@ def categorical_section(df, add_log):
                 else:
                     df_copy = pd.concat([df_copy, dummies], axis=1)
 
-                if existing_cols:
-                    st.info(f"Re-encoding '{col}' (old encoded columns replaced)")
-
             after_cols = df_copy.shape[1]
-            after_unique = df_copy[col].nunique() if col in df_copy.columns else "encoded"
 
-            # ---------- SAVE ----------
             st.session_state["df"] = df_copy
 
-            # ---------- FEEDBACK ----------
-            st.success("✔ Changes applied successfully")
-
-            if apply_grouping:
-                st.write(f"Grouped rare categories below {threshold}%")
-                st.write(f"Unique values: {before_unique} → {after_unique}")
-
-            if apply_ohe:
-                st.write(f"Columns: {before_cols} → {after_cols}")
-                st.write("New columns created:")
-                st.write(new_columns)
-
-            if not apply_grouping and not apply_ohe:
-                st.info("No changes selected.")
+            # ✅ SAVE RESULT
+            st.session_state["ohe_result"] = {
+                "before_cols": before_cols,
+                "after_cols": after_cols,
+                "new_cols": new_columns,
+                "removed_col": col if (apply_ohe and replace_original) else None,
+                "preview": df_copy.head(5)
+            }
 
             add_log(
                 operation="Encoding",
@@ -795,10 +1005,41 @@ def categorical_section(df, add_log):
                 affected=len(new_columns),
                 details=f"{before_cols} → {after_cols} columns"
             )
-            st.rerun()
+
+        
+
+    # ------------------ RESULT ------------------
+
+        if "ohe_result" in st.session_state:
+
+            r = st.session_state["ohe_result"]
+
+            st.markdown("### 🔍 Result")
+            st.caption("Last operation result")
+
+            st.write(f"Columns before: {r['before_cols']}")
+            st.write(f"Columns after: {r['after_cols']}")
+            st.write(f"New columns created: {len(r['new_cols'])}")
+
+            if r["removed_col"]:
+                st.write(f"Original column removed: {r['removed_col']}")
+
+            if r["new_cols"]:
+                st.markdown("**New columns:**")
+                st.dataframe(
+                    pd.DataFrame(r["new_cols"], columns=["Column Name"]),
+                    use_container_width=True
+                )
+
+            st.markdown("**Preview:**")
+            st.dataframe(r["preview"], use_container_width=True)
+
+            # optional manual clear
+            if st.button("Clear result"):
+                st.session_state.pop("ohe_result", None)
+                
 
     st.markdown("---")
-
     
 def outliers_section(df, add_log):
     st.markdown("## Outlier Detection & Handling")
