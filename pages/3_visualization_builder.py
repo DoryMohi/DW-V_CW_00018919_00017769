@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import io
 import matplotlib.pyplot as plt
 import datetime
 from utils import detect_id_columns
@@ -114,7 +115,6 @@ chart_type = st.selectbox(
 
 x_col = y_col = color_col = agg = None
 top_n = None
-
 # =========================
 # DYNAMIC UI
 # =========================
@@ -226,7 +226,7 @@ elif chart_type == "Heatmap":
 # =========================
 if st.button("Generate Chart"):
 
-    fig, ax = plt.subplots(figsize=(7, 5))
+    fig, ax = plt.subplots(figsize=(10, 6))
 
     try:
         if chart_type == "Histogram":
@@ -574,6 +574,18 @@ if st.button("Generate Chart"):
 
             plt.tight_layout()
 
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight")
+        buf.seek(0)
+
+        col1, col2 = st.columns([1,1])
+
+        st.download_button(
+            "Download Chart",
+            buf,
+            "chart.png",
+            "image/png"
+        )
     except Exception as e:
         st.error(f"Error: {e}")
         st.stop()
@@ -606,6 +618,13 @@ if logs:
 """)
     
     with st.sidebar.expander("View full log"):
+        if st.button("Reset Session", type="primary"):
+            for key in ["df", "log", "history", "original_df"]:
+                if key in st.session_state:
+                    del st.session_state[key]
+
+            st.session_state["uploader_key"] = 0
+            st.rerun()
         for entry in reversed(logs):
             st.markdown(f"""
 **{entry.get('operation', '-') }**
@@ -617,3 +636,4 @@ if logs:
 """)
 else:
     st.sidebar.caption("No transformations yet")
+    # ------------------ RESET ------------------

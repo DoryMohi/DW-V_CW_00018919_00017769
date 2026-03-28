@@ -6,6 +6,8 @@ import json
 from datetime import datetime
 from utils import detect_id_columns
 
+
+
 st.set_page_config(page_title="Insights & Export", layout="wide")
 
 st.title("📊 Page D — Insights & Export Dashboard")
@@ -38,49 +40,49 @@ col2.metric("Columns", df.shape[1])
 col3.metric("Missing Values", int(df.isnull().sum().sum()))
 col4.metric("Duplicate Rows", int(df.duplicated().sum()))
 
-# =========================
-# DATA QUALITY
-# =========================
-st.subheader("🧪 Data Quality Insights")
+
 
 missing = df.isnull().sum().sum()
 duplicates = df.duplicated().sum()
 ignore_cols = detect_id_columns(df)
-
-
-if missing > 0:
-    st.warning(f"{missing} missing values detected")
-else:
-    st.success("No missing values")
-
-if duplicates > 0:
-    st.warning(f"{duplicates} duplicate rows detected")
-else:
-    st.success("No duplicate rows")
-
+st.divider()
 # =========================
 # COLUMN TYPES
 # =========================
 st.subheader("📂 Column Analysis")
 
-numeric_cols = [
-    col for col in df.select_dtypes(include=['int64', 'float64']).columns
-    if col not in ignore_cols
-]
+st.markdown("""
+<style>
+.card {
+    padding: 20px;
+    border-radius: 14px;
+    background-color: #f8f9fb;
+    margin-bottom: 20px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
 categorical_cols = df.select_dtypes(include=['object', 'category', 'string']).columns.tolist()
 
-colA, colB = st.columns(2)
+col1, col2 = st.columns(2)
 
-with colA:
-    st.markdown("**Numeric Columns**")
-    for col in numeric_cols:
-        st.write(f"• {col}")
+def show_tags(cols):
+    tags = " ".join([
+        f"<span style='padding:4px 10px; margin:4px; background:#eef; border-radius:10px; display:inline-block; font-size:13px'>{col}</span>"
+        for col in cols
+    ])
+    st.markdown(tags, unsafe_allow_html=True)
 
-with colB:
-    st.markdown("**Categorical Columns**")
-    for col in categorical_cols:
-        st.write(f"• {col}")
+with col1:
+    st.markdown(f"**🔢 Numeric ({len(numeric_cols)})**")
+    show_tags(numeric_cols)
 
+with col2:
+    st.markdown(f"**🏷 Categorical ({len(categorical_cols)})**")
+    show_tags(categorical_cols)
+
+st.divider()
 # =========================
 # SMART INSIGHTS
 # =========================
@@ -112,7 +114,7 @@ if numeric_cols:
             f"The average **{selected_num}** is **{round(data.mean(),2)}**. "
             f"Values range from {data.min()} to {data.max()}, indicating {variability}."
         )
-
+st.divider()
 # =========================
 # CATEGORICAL INSIGHTS
 # =========================
@@ -138,7 +140,7 @@ if categorical_cols:
             f"({top_pct:.1f}% of data), indicating "
             f"{'imbalance' if top_pct > 60 else 'fair distribution'}."
         )
-
+st.divider()
 # =========================
 # ADVANCED ANALYSIS
 # =========================
@@ -171,8 +173,8 @@ if numeric_cols and categorical_cols:
 
 else:
     st.info("Not enough data for grouped analysis")
-
-# =========================
+st.divider()
+#==================
 # CORRELATION HEATMAP
 # =========================
 st.subheader("🔥 Correlation Analysis")
@@ -229,7 +231,7 @@ if len(numeric_cols) >= 2:
 
     else:
         st.warning("Select at least 2 columns")
-
+st.divider()
 # =========================
 # DATA PREVIEW
 # =========================
@@ -237,7 +239,7 @@ st.subheader("👀 Data Preview")
 
 rows = st.slider("Rows to preview", 5, 50, 10)
 st.dataframe(df.head(rows))
-
+st.divider()
 # =========================
 # EXPORT SECTION
 # =========================
@@ -315,13 +317,18 @@ def make_json_safe(obj):
     # fallback
     else:
         return obj
+st.divider()
 # =========================
 # TRANSFORMATION REPORT
 # =========================
 st.subheader("🧾 Transformation Report")
 
-if st.button("Generate Report"):
+cols = st.columns([1,1,6])
 
+with cols[0]:
+    generate = st.button("Generate Report")
+
+if generate:
     report = {
         "summary": {
             "rows": df.shape[0],
@@ -334,15 +341,16 @@ if st.button("Generate Report"):
     }
 
     safe_report = make_json_safe(report)
-
     report_json = json.dumps(safe_report, indent=2, default=str)
 
-    st.download_button(
-        "Download Report (JSON)",
-        report_json,
-        "transformation_report.json",
-        "application/json"
-    )
+    with cols[1]:
+        st.download_button(
+            "Download JSON",
+            report_json,
+            "transformation_report.json",
+            "application/json"
+        )
+st.divider()
 
 # =========================
 # FINAL NOTE

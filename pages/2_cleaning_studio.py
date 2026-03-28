@@ -301,3 +301,12 @@ if logs:
 
 else:
     st.info("No transformations yet.")
+
+# ------------------ RESET ------------------
+if st.button("Reset Session", type="primary"):
+    for key in ["df", "log", "history", "original_df"]:
+        if key in st.session_state:
+            del st.session_state[key]
+
+    st.session_state["uploader_key"] = 0
+    st.rerun()

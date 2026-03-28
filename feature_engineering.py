@@ -292,26 +292,26 @@ def feature_engineering_section(df, add_log):
             st.session_state["history"].append(df.copy())
             if not new_col_name.strip():
                 st.warning("Enter column name.")
+                return
 
             elif new_col_name in df.columns:
                 st.warning("Column already exists.")
-
+                return
             else:
                 df_copy = df.copy()
 
                 try:
                     if formula_type == "Division":
+                        if (df_copy[col2] == 0).any():
+                            st.warning("Division by zero detected → replaced with NaN")
+
                         df_copy[new_col_name] = df_copy[col1] / df_copy[col2].replace(0, np.nan)
-                        st.warning("Division by zero detected. Replacing with NaN.")                        
                     # Apply formula
                     if formula_type == "Addition":
                         df_copy[new_col_name] = df_copy[col1] + df_copy[col2]
 
                     elif formula_type == "Subtraction":
                         df_copy[new_col_name] = df_copy[col1] - df_copy[col2]
-
-                    elif formula_type == "Division":
-                        df_copy[new_col_name] = df_copy[col1] / df_copy[col2]
 
                     elif formula_type == "Log":
                         if (df_copy[col1] <= 0).any():
@@ -338,7 +338,8 @@ def feature_engineering_section(df, add_log):
                         use_container_width=True
                     )
                     st.caption("ℹ️ Result depends on previous transformations. Some operations may cancel each other out.")
-                    if abs(df_copy[col1].mean()) < abs(df_copy[col2].mean()) * 0.01:
+                    if col2 is not None:
+                        if abs(df_copy[col1].mean()) < abs(df_copy[col2].mean()) * 0.01:
                             st.caption("⚠️ Large scale difference between columns may dominate the result")
 
                     st.session_state["newcol_result"] = {
@@ -347,9 +348,9 @@ def feature_engineering_section(df, add_log):
                         "new_col": new_col_name,
                         "preview": df_copy.head(5)
                     }
-
-                except Exception as e:
-                    st.error(f"Error: {e}")
+                except:
+                    st.error("Error")
+            
     st.markdown("---")
 
     st.subheader("Binning (Discretization)")
